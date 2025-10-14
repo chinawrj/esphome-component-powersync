@@ -569,6 +569,208 @@ void PowerSyncComponent::simulate_ac_measurements_()
     ESP_LOGI(TAG, "   - Power Factor: %.2f", power_factor);
 }
 
+// TLV parsing callback implementation
+bool PowerSyncComponent::tlv_parse_callback_(uint8_t type, uint8_t length, const uint8_t* value, void* user_data)
+{
+    // user_data is the TLVParseContext pointer
+    TLVParseContext* ctx = static_cast<TLVParseContext*>(user_data);
+    
+    // Use TLV helper function to get type name
+    const char* type_name = tlv_type_to_string(type);
+    
+    ESP_LOGI(TAG, "📦 TLV Entry: Type=0x%02X (%s), Length=%d", type, type_name, length);
+    
+    // Parse different TLV types and store in context
+    switch (type) {
+        case TLV_TYPE_UPTIME: {
+            if (length == TLV_SIZE_UPTIME) {
+                ctx->device_state.uptime = TLV_UINT32_FROM_BE(value);
+                ctx->has_uptime = true;
+                ESP_LOGI(TAG, "   ⏱️  Uptime: %lu seconds (%.2f hours)", 
+                         ctx->device_state.uptime, ctx->device_state.uptime / 3600.0f);
+            } else {
+                ESP_LOGW(TAG, "   ⚠️  Invalid uptime length: %d (expected %d)", length, TLV_SIZE_UPTIME);
+            }
+            break;
+        }
+        
+        case TLV_TYPE_TIMESTAMP: {
+            if (length == TLV_SIZE_TIMESTAMP) {
+                uint32_t timestamp = TLV_UINT32_FROM_BE(value);
+                ESP_LOGI(TAG, "   🕐 Timestamp: %lu", timestamp);
+            }
+            break;
+        }
+        
+        case TLV_TYPE_DEVICE_ID: {
+            if (length > 0 && length <= TLV_MAX_DEVICE_ID_LEN) {
+                char device_id[TLV_MAX_DEVICE_ID_LEN + 1] = {0};
+                memcpy(device_id, value, length);
+                ESP_LOGI(TAG, "   🏷️  Device ID: %s", device_id);
+            }
+            break;
+        }
+        
+        case TLV_TYPE_FIRMWARE_VER: {
+            if (length > 0 && length <= TLV_MAX_FIRMWARE_VER_LEN) {
+                char firmware[TLV_MAX_FIRMWARE_VER_LEN + 1] = {0};
+                memcpy(firmware, value, length);
+                ctx->device_state.firmware_version = std::string(firmware);
+                ctx->has_firmware = true;
+                ESP_LOGI(TAG, "   📌 Firmware: %s", firmware);
+            }
+            break;
+        }
+        
+        case TLV_TYPE_MAC_ADDRESS: {
+            if (length == TLV_SIZE_MAC_ADDRESS) {
+                ESP_LOGI(TAG, "   🌐 MAC: %02X:%02X:%02X:%02X:%02X:%02X",
+                        value[0], value[1], value[2], value[3], value[4], value[5]);
+            }
+            break;
+        }
+        
+        case TLV_TYPE_COMPILE_TIME: {
+            if (length > 0 && length <= TLV_MAX_COMPILE_TIME_LEN) {
+                char compile_time[TLV_MAX_COMPILE_TIME_LEN + 1] = {0};
+                memcpy(compile_time, value, length);
+                ESP_LOGI(TAG, "   🔨 Compile time: %s", compile_time);
+            }
+            break;
+        }
+        
+        case TLV_TYPE_FREE_MEMORY: {
+            if (length == TLV_SIZE_FREE_MEMORY) {
+                uint32_t free_mem = TLV_UINT32_FROM_BE(value);
+                ESP_LOGI(TAG, "   💾 Free memory: %lu bytes (%.1f KB)", free_mem, free_mem / 1024.0f);
+            }
+            break;
+        }
+        
+        case TLV_TYPE_DEVICE_ROLE: {
+            if (length == TLV_SIZE_DEVICE_ROLE) {
+                uint8_t role = value[0];
+                ctx->device_state.role = static_cast<DeviceRole>(role);
+                ctx->has_role = true;
+                const char* role_name = tlv_device_role_to_string(role);
+                ESP_LOGI(TAG, "   🎭 Device role: %s (%d)", role_name, role);
+            }
+            break;
+        }
+        
+        case TLV_TYPE_AC_VOLTAGE: {
+            if (length == TLV_SIZE_AC_VOLTAGE) {
+                TLV_FLOAT32_FROM_BE(value, ctx->device_state.voltage);
+                ctx->has_voltage = true;
+                ESP_LOGI(TAG, "   ⚡ AC Voltage: %.1f V", ctx->device_state.voltage);
+            }
+            break;
+        }
+        
+        case TLV_TYPE_AC_CURRENT: {
+            if (length == TLV_SIZE_AC_CURRENT) {
+                int32_t current_ma = TLV_INT32_FROM_BE(value);
+                ctx->device_state.current = TLV_CURRENT_MA_TO_A(current_ma);
+                ctx->has_current = true;
+                ESP_LOGI(TAG, "   🔌 AC Current: %.3f A (%d mA)", ctx->device_state.current, current_ma);
+            }
+            break;
+        }
+        
+        case TLV_TYPE_AC_FREQUENCY: {
+            if (length == TLV_SIZE_AC_FREQUENCY) {
+                float frequency;
+                TLV_FLOAT32_FROM_BE(value, frequency);
+                ESP_LOGI(TAG, "   📻 AC Frequency: %.2f Hz", frequency);
+            }
+            break;
+        }
+        
+        case TLV_TYPE_AC_POWER: {
+            if (length == TLV_SIZE_AC_POWER) {
+                int32_t power_mw = TLV_INT32_FROM_BE(value);
+                ctx->device_state.power = TLV_POWER_MW_TO_W(power_mw);
+                ctx->has_power = true;
+                ESP_LOGI(TAG, "   💡 AC Power: %.3f W (%d mW)", ctx->device_state.power, power_mw);
+            }
+            break;
+        }
+        
+        case TLV_TYPE_AC_POWER_FACTOR: {
+            if (length == TLV_SIZE_AC_POWER_FACTOR) {
+                float power_factor;
+                TLV_FLOAT32_FROM_BE(value, power_factor);
+                ESP_LOGI(TAG, "   📊 Power Factor: %.3f", power_factor);
+            }
+            break;
+        }
+        
+        case TLV_TYPE_ENERGY_TOTAL: {
+            if (length == TLV_SIZE_ENERGY_TOTAL) {
+                float energy;
+                TLV_FLOAT32_FROM_BE(value, energy);
+                ESP_LOGI(TAG, "   🔋 Total Energy: %.2f kWh", energy);
+            }
+            break;
+        }
+        
+        case TLV_TYPE_ENERGY_TODAY: {
+            if (length == TLV_SIZE_ENERGY_TODAY) {
+                float energy;
+                TLV_FLOAT32_FROM_BE(value, energy);
+                ESP_LOGI(TAG, "   📅 Today's Energy: %.2f kWh", energy);
+            }
+            break;
+        }
+        
+        case TLV_TYPE_STATUS_FLAGS: {
+            if (length == TLV_SIZE_STATUS_FLAGS) {
+                uint16_t flags = TLV_UINT16_FROM_BE(value);
+                ESP_LOGI(TAG, "   🚦 Status Flags: 0x%04X", flags);
+                if (flags & STATUS_FLAG_POWER_ON) ESP_LOGI(TAG, "      - Power ON");
+                if (flags & STATUS_FLAG_CALIBRATING) ESP_LOGI(TAG, "      - Calibrating");
+                if (flags & STATUS_FLAG_ERROR) ESP_LOGI(TAG, "      - Error");
+                if (flags & STATUS_FLAG_LOW_BATTERY) ESP_LOGI(TAG, "      - Low Battery");
+                if (flags & STATUS_FLAG_WIFI_CONNECTED) ESP_LOGI(TAG, "      - WiFi Connected");
+                if (flags & STATUS_FLAG_ESP_NOW_ACTIVE) ESP_LOGI(TAG, "      - ESP-NOW Active");
+            }
+            break;
+        }
+        
+        case TLV_TYPE_ERROR_CODE: {
+            if (length == TLV_SIZE_ERROR_CODE) {
+                uint16_t error_code = TLV_UINT16_FROM_BE(value);
+                ESP_LOGI(TAG, "   ❌ Error Code: 0x%04X", error_code);
+            }
+            break;
+        }
+        
+        case TLV_TYPE_TEMPERATURE: {
+            if (length == TLV_SIZE_TEMPERATURE) {
+                float temperature;
+                TLV_FLOAT32_FROM_BE(value, temperature);
+                ESP_LOGI(TAG, "   🌡️  Temperature: %.1f °C", temperature);
+            }
+            break;
+        }
+        
+        case TLV_TYPE_HUMIDITY: {
+            if (length == TLV_SIZE_HUMIDITY) {
+                float humidity;
+                TLV_FLOAT32_FROM_BE(value, humidity);
+                ESP_LOGI(TAG, "   💧 Humidity: %.1f %%", humidity);
+            }
+            break;
+        }
+        
+        default:
+            ESP_LOGW(TAG, "   ⚠️  Unknown TLV type: 0x%02X", type);
+            break;
+    }
+    
+    return true; // Continue parsing next TLV entry
+}
+
 // FreeRTOS task function implementation
 void PowerSyncComponent::espnow_task_function_(void *pvParameters)
 {
@@ -599,7 +801,90 @@ void PowerSyncComponent::espnow_task_function_(void *pvParameters)
                              msg.src_addr[3], msg.src_addr[4], msg.src_addr[5]);
                     ESP_LOGI(TAG, "- Data length: %zu bytes", msg.body_length);
                     ESP_LOGI(TAG, "- RSSI: %d dBm", msg.rssi);
-                    // Additional processing of received TLV data can be added here
+                    
+                    // Validate TLV packet structure before parsing
+                    if (tlv_validate_packet(msg.body, msg.body_length)) {
+                        ESP_LOGI(TAG, "✅ TLV packet structure is valid");
+                        
+                        // Count TLV entries
+                        int entry_count = tlv_count_entries(msg.body, msg.body_length);
+                        ESP_LOGI(TAG, "📊 TLV packet contains %d entries", entry_count);
+                        
+                        // Create parsing context
+                        TLVParseContext ctx;
+                        ctx.device_state.rssi = msg.rssi;
+                        memcpy(ctx.device_state.src_addr, msg.src_addr, 6);
+                        ctx.device_state.last_update_time = millis();
+                        
+                        // Parse TLV data using streaming parser
+                        int parsed = tlv_parse_stream(msg.body, msg.body_length, 
+                                                     component->tlv_parse_callback_, 
+                                                     &ctx);
+                        
+                        if (parsed >= 0) {
+                            ESP_LOGI(TAG, "✅ Successfully parsed %d TLV entries", parsed);
+                            
+                            // Update device state if we have valid role and at least one measurement
+                            if (ctx.has_role && (ctx.has_voltage || ctx.has_current || ctx.has_power)) {
+                                // Get reference to device state for this role
+                                DeviceState& dev_state = component->device_states_[ctx.device_state.role];
+                                
+                                // Always update role, RSSI, MAC, and timestamp
+                                dev_state.role = ctx.device_state.role;
+                                dev_state.rssi = msg.rssi;
+                                memcpy(dev_state.src_addr, msg.src_addr, 6);
+                                dev_state.last_update_time = millis();
+                                
+                                // Only copy fields that were actually parsed (has_* flags)
+                                if (ctx.has_voltage) {
+                                    dev_state.voltage = ctx.device_state.voltage;
+                                }
+                                if (ctx.has_current) {
+                                    dev_state.current = ctx.device_state.current;
+                                }
+                                if (ctx.has_power) {
+                                    dev_state.power = ctx.device_state.power;
+                                }
+                                if (ctx.has_uptime) {
+                                    dev_state.uptime = ctx.device_state.uptime;
+                                }
+                                if (ctx.has_firmware) {
+                                    dev_state.firmware_version = ctx.device_state.firmware_version;
+                                }
+                                
+                                // Mark device state as valid
+                                dev_state.is_valid = true;
+                                
+                                ESP_LOGI(TAG, "💾 Updated device state for role %s (V:%d I:%d P:%d U:%d F:%d)", 
+                                         tlv_device_role_to_string(ctx.device_state.role),
+                                         ctx.has_voltage, ctx.has_current, ctx.has_power,
+                                         ctx.has_uptime, ctx.has_firmware);
+                                
+                                // Log updated values for debugging
+                                component->update_device_state_(ctx.device_state.role, msg.src_addr, msg.rssi);
+                            } else {
+                                ESP_LOGW(TAG, "⚠️ Missing required fields (role:%d, voltage:%d, current:%d, power:%d)",
+                                         ctx.has_role, ctx.has_voltage, ctx.has_current, ctx.has_power);
+                            }
+                        } else {
+                            switch (parsed) {
+                                case -1:
+                                    ESP_LOGE(TAG, "❌ TLV parse error: Invalid parameters");
+                                    break;
+                                case -2:
+                                    ESP_LOGE(TAG, "❌ TLV parse error: Malformed packet");
+                                    break;
+                                case -3:
+                                    ESP_LOGW(TAG, "⚠️ TLV parsing terminated early by callback");
+                                    break;
+                                default:
+                                    ESP_LOGE(TAG, "❌ TLV parse error: Unknown error code %d", parsed);
+                                    break;
+                            }
+                        }
+                    } else {
+                        ESP_LOGE(TAG, "❌ Invalid TLV packet structure, skipping parsing");
+                    }
                     break;
                     
                 default:
@@ -621,6 +906,87 @@ void PowerSyncComponent::espnow_task_function_(void *pvParameters)
         }
         
         // Note: We don't need additional delay here since xQueueReceive already provides a 10ms timeout
+    }
+}
+
+// Device state management methods implementation
+
+const DeviceState* PowerSyncComponent::get_device_state(DeviceRole role) const
+{
+    if (role >= MAX_DEVICE_ROLES) {
+        return nullptr;
+    }
+    
+    const DeviceState& state = this->device_states_[role];
+    if (!state.is_valid) {
+        return nullptr;
+    }
+    
+    // Check if device data is still fresh (within timeout period)
+    uint32_t now = millis();
+    if (now - state.last_update_time > DEVICE_STATE_TIMEOUT) {
+        return nullptr; // Data too old
+    }
+    
+    return &state;
+}
+
+bool PowerSyncComponent::is_device_active(DeviceRole role) const
+{
+    return get_device_state(role) != nullptr;
+}
+
+void PowerSyncComponent::clear_inactive_devices()
+{
+    uint32_t now = millis();
+    int cleared_count = 0;
+    
+    for (size_t i = 0; i < MAX_DEVICE_ROLES; i++) {
+        DeviceState& state = this->device_states_[i];
+        if (state.is_valid && (now - state.last_update_time > DEVICE_STATE_TIMEOUT)) {
+            ESP_LOGI(TAG, "⏰ Clearing inactive device: role %s (last update: %lu ms ago)",
+                     tlv_device_role_to_string(i), now - state.last_update_time);
+            state.is_valid = false;
+            cleared_count++;
+        }
+    }
+    
+    if (cleared_count > 0) {
+        ESP_LOGI(TAG, "🧹 Cleared %d inactive device(s)", cleared_count);
+    }
+}
+
+void PowerSyncComponent::update_device_state_(DeviceRole role, const uint8_t *src_addr, int rssi)
+{
+    if (role >= MAX_DEVICE_ROLES) {
+        ESP_LOGW(TAG, "⚠️ Invalid device role: %d", role);
+        return;
+    }
+    
+    const DeviceState& state = this->device_states_[role];
+    
+    // Log device state update (only show what was actually received)
+    ESP_LOGI(TAG, "📝 Device state summary:");
+    ESP_LOGI(TAG, "   Role: %s", tlv_device_role_to_string(role));
+    ESP_LOGI(TAG, "   MAC: %02X:%02X:%02X:%02X:%02X:%02X",
+             src_addr[0], src_addr[1], src_addr[2], src_addr[3], src_addr[4], src_addr[5]);
+    
+    // Only log non-zero values (assuming 0 means not set)
+    if (state.voltage != 0.0f) {
+        ESP_LOGI(TAG, "   Voltage: %.1f V", state.voltage);
+    }
+    if (state.current != 0.0f) {
+        ESP_LOGI(TAG, "   Current: %.3f A", state.current);
+    }
+    if (state.power != 0.0f) {
+        ESP_LOGI(TAG, "   Power: %.3f W", state.power);
+    }
+    ESP_LOGI(TAG, "   RSSI: %d dBm", rssi);
+    if (state.uptime > 0) {
+        ESP_LOGI(TAG, "   Uptime: %lu s (%.2f hours)", state.uptime, state.uptime / 3600.0f);
+    }
+    if (!state.firmware_version.empty()) {
+        ESP_LOGI(TAG, "   Firmware: %s", state.firmware_version.c_str());
     }
 }
 

@@ -429,6 +429,197 @@ typedef struct {
 //   -100.5W -> -100500mW (int32_t) -> TLV: [0xFF, 0xFE, 0x76, 0xDC]
 
 // ============================================================================
+// TLV Stream Parsing API (Pure C, compatible with C and C++ projects)
+// ============================================================================
+// These functions provide efficient zero-copy streaming TLV packet parsing
+
+/**
+ * @brief TLV parse callback function type
+ * 
+ * This callback is invoked for each TLV entry found during stream parsing.
+ * 
+ * @param type TLV type identifier (see TLV_TYPE_* constants)
+ * @param length Length of the value field in bytes
+ * @param value Pointer to the value data (not null-terminated for strings)
+ * @param user_data User-provided context pointer
+ * @return true to continue parsing, false to stop parsing
+ * 
+ * Example callback implementation:
+ * @code
+ * bool my_callback(uint8_t type, uint8_t length, const uint8_t* value, void* user_data) {
+ *     switch(type) {
+ *         case TLV_TYPE_AC_VOLTAGE: {
+ *             float voltage;
+ *             TLV_FLOAT32_FROM_BE(value, voltage);
+ *             printf("Voltage: %.1f V\n", voltage);
+ *             break;
+ *         }
+ *         case TLV_TYPE_DEVICE_ID: {
+ *             char device_id[33] = {0};
+ *             memcpy(device_id, value, length);
+ *             printf("Device: %s\n", device_id);
+ *             break;
+ *         }
+ *     }
+ *     return true; // Continue parsing
+ * }
+ * @endcode
+ */
+typedef bool (*tlv_parse_callback_t)(uint8_t type, uint8_t length, const uint8_t* value, void* user_data);
+
+/**
+ * @brief Parse TLV packet stream using callback function
+ * 
+ * This function provides efficient zero-copy streaming parsing of TLV packets.
+ * It validates packet structure and invokes the callback for each valid TLV entry.
+ * 
+ * Features:
+ * - Zero memory allocation (zero-copy)
+ * - Automatic boundary checking
+ * - Malformed packet detection
+ * - Early termination support via callback return value
+ * 
+ * @param buffer Pointer to the TLV packet buffer
+ * @param buffer_size Size of the buffer in bytes
+ * @param callback Callback function to process each TLV entry
+ * @param user_data User-provided context pointer passed to callback
+ * @return Number of successfully parsed TLV entries, or negative error code:
+ *         -1: Invalid parameters (NULL buffer or callback)
+ *         -2: Malformed packet (incomplete TLV entry)
+ *         -3: Callback requested early termination
+ * 
+ * Usage example:
+ * @code
+ * uint8_t packet[] = { 0x01, 0x04, 0x00, 0x00, 0x12, 0x34,  // UPTIME TLV
+ *                      0x10, 0x04, 0x43, 0x5C, 0x66, 0x66 }; // VOLTAGE TLV
+ * int result = tlv_parse_stream(packet, sizeof(packet), my_callback, NULL);
+ * if (result >= 0) {
+ *     printf("Parsed %d TLV entries\n", result);
+ * } else {
+ *     printf("Parse error: %d\n", result);
+ * }
+ * @endcode
+ */
+static inline int tlv_parse_stream(const uint8_t* buffer, size_t buffer_size, 
+                                   tlv_parse_callback_t callback, void* user_data) {
+    // Validate input parameters
+    if (buffer == NULL || callback == NULL || buffer_size == 0) {
+        return -1; // Invalid parameters
+    }
+    
+    size_t offset = 0;
+    int parsed_count = 0;
+    
+    while (offset < buffer_size) {
+        // Check if we have at least Type and Length bytes
+        if (offset + 2 > buffer_size) {
+            return -2; // Malformed packet: incomplete TLV header
+        }
+        
+        uint8_t type = buffer[offset];
+        uint8_t length = buffer[offset + 1];
+        
+        // Check if the value field fits within the buffer
+        if (offset + 2 + length > buffer_size) {
+            return -2; // Malformed packet: value field exceeds buffer
+        }
+        
+        // Get pointer to value data
+        const uint8_t* value = (length > 0) ? &buffer[offset + 2] : NULL;
+        
+        // Invoke callback
+        bool continue_parsing = callback(type, length, value, user_data);
+        if (!continue_parsing) {
+            return -3; // Callback requested early termination
+        }
+        
+        // Move to next TLV entry
+        offset += 2 + length;
+        parsed_count++;
+    }
+    
+    return parsed_count; // Return number of successfully parsed entries
+}
+
+/**
+ * @brief Validate TLV packet structure without parsing
+ * 
+ * This function performs a quick validation of TLV packet structure
+ * without invoking any callbacks or processing the data.
+ * 
+ * @param buffer Pointer to the TLV packet buffer
+ * @param buffer_size Size of the buffer in bytes
+ * @return true if packet structure is valid, false otherwise
+ * 
+ * Usage example:
+ * @code
+ * if (tlv_validate_packet(data, len)) {
+ *     printf("Valid TLV packet\n");
+ * } else {
+ *     printf("Invalid TLV packet structure\n");
+ * }
+ * @endcode
+ */
+static inline bool tlv_validate_packet(const uint8_t* buffer, size_t buffer_size) {
+    if (buffer == NULL || buffer_size == 0) {
+        return false;
+    }
+    
+    size_t offset = 0;
+    
+    while (offset < buffer_size) {
+        // Check for TLV header
+        if (offset + 2 > buffer_size) {
+            return false; // Incomplete header
+        }
+        
+        uint8_t length = buffer[offset + 1];
+        
+        // Check if value field fits
+        if (offset + 2 + length > buffer_size) {
+            return false; // Value exceeds buffer
+        }
+        
+        offset += 2 + length;
+    }
+    
+    return true; // All TLV entries are valid
+}
+
+/**
+ * @brief Count number of TLV entries in a packet
+ * 
+ * @param buffer Pointer to the TLV packet buffer
+ * @param buffer_size Size of the buffer in bytes
+ * @return Number of TLV entries, or -1 on error
+ */
+static inline int tlv_count_entries(const uint8_t* buffer, size_t buffer_size) {
+    if (buffer == NULL || buffer_size == 0) {
+        return -1;
+    }
+    
+    size_t offset = 0;
+    int count = 0;
+    
+    while (offset < buffer_size) {
+        if (offset + 2 > buffer_size) {
+            return -1; // Malformed packet
+        }
+        
+        uint8_t length = buffer[offset + 1];
+        
+        if (offset + 2 + length > buffer_size) {
+            return -1; // Malformed packet
+        }
+        
+        offset += 2 + length;
+        count++;
+    }
+    
+    return count;
+}
+
+// ============================================================================
 // TLV Helper Functions (Pure C, compatible with C and C++ projects)
 // ============================================================================
 // These functions are placed at the end to ensure all constants are defined

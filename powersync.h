@@ -59,6 +59,53 @@ enum MessageType : uint8_t {
 // Maximum message body size (adjust as needed)
 static const size_t MAX_MESSAGE_BODY_SIZE = 250;
 
+// Maximum number of device roles (0-9)
+static const size_t MAX_DEVICE_ROLES = 10;
+
+// Structure to store received device information
+struct DeviceState {
+  // Electrical measurements
+  float voltage;           // AC Voltage in volts (V)
+  float current;           // AC Current in amperes (A)
+  float power;             // AC Power in watts (W)
+  
+  // Communication info
+  int rssi;                // RSSI signal strength in dBm
+  uint32_t uptime;         // Device uptime in seconds
+  std::string firmware_version;  // Firmware version string
+  
+  // Timing
+  uint32_t last_update_time;  // Timestamp of last update (millis())
+  
+  // Status
+  bool is_valid;           // Whether this device data is valid/active
+  uint8_t src_addr[6];     // Source MAC address
+  DeviceRole role;         // Device role type
+  
+  // Constructor to initialize with default values
+  DeviceState() 
+    : voltage(0.0f), current(0.0f), power(0.0f),
+      rssi(0), uptime(0), firmware_version(""),
+      last_update_time(0), is_valid(false), role(ROLE_UNKNOWN) {
+    memset(src_addr, 0, 6);
+  }
+};
+
+// TLV parsing context structure for callback
+struct TLVParseContext {
+  DeviceState device_state;  // Temporary storage for parsed data
+  bool has_voltage;
+  bool has_current;
+  bool has_power;
+  bool has_uptime;
+  bool has_firmware;
+  bool has_role;
+  
+  TLVParseContext() 
+    : has_voltage(false), has_current(false), has_power(false),
+      has_uptime(false), has_firmware(false), has_role(false) {}
+};
+
 // Message structure for the queue
 struct PowerSyncMessage {
   MessageType type;
@@ -104,6 +151,11 @@ class PowerSyncComponent : public Component {
   void set_ac_power(float power);
   void trigger_broadcast();
   void send_tlv_command();
+  
+  // Device state management methods
+  const DeviceState* get_device_state(DeviceRole role) const;
+  bool is_device_active(DeviceRole role) const;
+  void clear_inactive_devices();  // Remove devices that haven't updated recently
 
  protected:
   // Configuration
@@ -141,6 +193,14 @@ class PowerSyncComponent : public Component {
   uint32_t uptime_seconds_ = 0;
   uint32_t free_memory_ = 0;
 
+  // Device state array - stores information from other devices
+  // Index corresponds to DeviceRole enum (0-9)
+  // Only one device per role type is stored
+  DeviceState device_states_[MAX_DEVICE_ROLES];
+  
+  // Device state timeout (milliseconds)
+  static const uint32_t DEVICE_STATE_TIMEOUT = 30000;  // 30 seconds
+
   // Timing
   uint32_t last_broadcast_time_ = 0;
   uint32_t last_system_update_time_ = 0;
@@ -164,6 +224,9 @@ class PowerSyncComponent : public Component {
   void handle_unknown_peer_(const uint8_t *src_addr, const uint8_t *data, int len, int rssi);
   void trigger_packet_received_effect_();
   void trigger_alert_red_effect_();
+  
+  // Device state management methods
+  void update_device_state_(DeviceRole role, const uint8_t *src_addr, int rssi);
   
   // Simulation method
   void simulate_ac_measurements_();
@@ -196,6 +259,9 @@ class PowerSyncComponent : public Component {
 
   // FreeRTOS task function
   static void espnow_task_function_(void *pvParameters);
+  
+  // TLV parsing callback (static function for use with tlv_parse_stream)
+  static bool tlv_parse_callback_(uint8_t type, uint8_t length, const uint8_t* value, void* user_data);
 };
 
 }  // namespace powersync
