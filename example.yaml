@@ -1,0 +1,123 @@
+# Example ESPHome configuration using the PowerSync component
+# This replaces the functionality from esp32_common_powersync.yaml
+
+esphome:
+  name: powersync-example
+  platform: ESP32
+  board: esp32dev
+
+wifi:
+  ssid: "YourWiFiSSID"
+  password: "YourWiFiPassword"
+
+logger:
+  level: DEBUG
+
+# Hardware configuration for RGB LED
+output:
+  - platform: gpio
+    pin: GPIO2
+    id: rgb_power_enable
+
+light:
+  - platform: neopixel
+    pin: GPIO8
+    num_leds: 1
+    id: rgb_strip
+    effects:
+      - strobe:
+          name: "Packet Received"
+          colors:
+            - state: true
+              brightness: 90%
+              red: 0%
+              green: 100%
+              blue: 0%
+              duration: 100ms
+            - state: false
+              duration: 200ms
+      - strobe:
+          name: "Alert Red"
+          colors:
+            - state: true
+              brightness: 100%
+              red: 100%
+              green: 0%
+              blue: 0%
+              duration: 200ms
+            - state: false
+              duration: 200ms
+
+# PowerSync component configuration
+powersync:
+  id: my_powersync
+  channel: 1
+  auto_add_peer: true
+  broadcast_interval: 5s
+  system_update_interval: 100ms
+  firmware_version: "1.0.0"
+  simulate: false
+  device_role: GRID_INPUT  # Available roles: UNKNOWN, GRID_INPUT, INVERTER_AC_INPUT, 
+                           # INVERTER_AC_OUTPUT, INVERTER_DC_BATTERY, INVERTER_DC_GRID_POWER,
+                           # SINKER_AC_HEATER, SINKER_DC_HEATER, SINKER_AC_VEHICLE_CHARGER,
+                           # SINKER_DC_VEHICLE_CHARGER
+  
+  # Required hardware references
+  rgb_power_enable: rgb_power_enable
+  rgb_strip: rgb_strip
+  
+  # Optional sensors that will show TLV data in Home Assistant
+  ac_voltage_sensor:
+    name: "AC Voltage"
+    id: voltage_sensor
+  ac_current_sensor:
+    name: "AC Current"
+    id: current_sensor
+  ac_frequency_sensor:
+    name: "AC Frequency"
+    id: frequency_sensor
+  ac_power_sensor:
+    name: "AC Power"
+    id: power_sensor
+  button_press_count_sensor:
+    name: "Button Press Count"
+    id: button_count_sensor
+
+# Example button to increment counter
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO0
+      mode: INPUT_PULLUP
+      inverted: true
+    name: "Test Button"
+    on_press:
+      then:
+        - lambda: |-
+            id(my_powersync)->increment_button_press_count();
+
+# Example script to simulate AC measurements
+interval:
+  - interval: 2s
+    then:
+      - lambda: |-
+          // Simulate some AC measurements
+          float voltage = 230.0 + (rand() % 10 - 5) * 0.1;  // 229.5-230.5V
+          float current = 2.5 + (rand() % 10 - 5) * 0.01;   // 2.45-2.55A
+          float frequency = 50.0 + (rand() % 10 - 5) * 0.01; // 49.95-50.05Hz
+          float power = voltage * current;
+          
+          // Update PowerSync component with new values
+          id(my_powersync)->set_ac_voltage(voltage);
+          id(my_powersync)->set_ac_current(current);
+          id(my_powersync)->set_ac_frequency(frequency);
+          id(my_powersync)->set_ac_power(power);
+
+# Optional: Manual broadcast trigger via Home Assistant
+button:
+  - platform: template
+    name: "Trigger Manual Broadcast"
+    on_press:
+      then:
+        - lambda: |-
+            id(my_powersync)->trigger_broadcast();
