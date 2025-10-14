@@ -41,7 +41,11 @@ enum DeviceRole : uint8_t {
   ROLE_SINKER_AC_HEATER = 6,
   ROLE_SINKER_DC_HEATER = 7,
   ROLE_SINKER_AC_VEHICLE_CHARGER = 8,
-  ROLE_SINKER_DC_VEHICLE_CHARGER = 9
+  ROLE_SINKER_DC_VEHICLE_CHARGER = 9,
+  ROLE_SOLOAR_INVERTER_OUTPUT_TOTAL = 10,
+  
+  // This must be the last entry - used to calculate array size
+  ROLE_COUNT  // Automatically equals 11
 };
 
 // Status flags for TLV_TYPE_STATUS_FLAGS
@@ -59,8 +63,8 @@ enum MessageType : uint8_t {
 // Maximum message body size (adjust as needed)
 static const size_t MAX_MESSAGE_BODY_SIZE = 250;
 
-// Maximum number of device roles (0-9)
-static const size_t MAX_DEVICE_ROLES = 10;
+// Maximum number of device roles - automatically calculated from enum
+static const size_t MAX_DEVICE_ROLES = static_cast<size_t>(DeviceRole::ROLE_COUNT);
 
 // Structure to store received device information
 struct DeviceState {

@@ -84,6 +84,7 @@
 #define DEVICE_ROLE_SINKER_DC_HEATER        7
 #define DEVICE_ROLE_SINKER_AC_VEHICLE_CHARGER 8
 #define DEVICE_ROLE_SINKER_DC_VEHICLE_CHARGER 9
+#define DEVICE_ROLE_SOLOAR_INVERTER_OUTPUT_TOTAL 10
 
 // TLV Structure for reference
 typedef struct {
@@ -252,11 +253,12 @@ typedef struct {
 // TLV_TYPE_DEVICE_ROLE (0x08):
 //   Format: uint8_t (1 byte)
 //   Unit: Device role identifier (enum value)
-//   Range: 0-9 (see DEVICE_ROLE_* constants)
+//   Range: 0-10 (see DEVICE_ROLE_* constants)
 //   Usage: Identifies the function/role of the device in power system
 //   Values: 0=Unknown, 1=Grid Input, 2=Inverter AC Input, 3=Inverter AC Output,
 //           4=Inverter DC Battery, 5=Inverter DC Grid Power, 6=AC Heater,
-//           7=DC Heater, 8=AC Vehicle Charger, 9=DC Vehicle Charger
+//           7=DC Heater, 8=AC Vehicle Charger, 9=DC Vehicle Charger,
+//           10=Solar Inverter Output Total
 
 // ELECTRICAL MEASUREMENTS (0x10-0x2F)
 //
@@ -639,6 +641,7 @@ static inline const char* tlv_device_role_to_string(uint8_t role) {
         case DEVICE_ROLE_SINKER_DC_HEATER: return "SINKER_DC_HEATER";
         case DEVICE_ROLE_SINKER_AC_VEHICLE_CHARGER: return "SINKER_AC_VEHICLE_CHARGER";
         case DEVICE_ROLE_SINKER_DC_VEHICLE_CHARGER: return "SINKER_DC_VEHICLE_CHARGER";
+        case DEVICE_ROLE_SOLOAR_INVERTER_OUTPUT_TOTAL: return "SOLOAR_INVERTER_OUTPUT_TOTAL";
         default: return "INVALID";
     }
 }
