@@ -14,6 +14,7 @@
 #include <esp_mac.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <freertos/queue.h>
 #endif
 
 #include <cstdint>
@@ -49,9 +50,28 @@ enum StatusFlags : uint16_t {
   STATUS_ESP_NOW_ACTIVE = 0x0020
 };
 
+// Message queue types
+enum MessageType : uint8_t {
+  CMD_SEND_TLV = 0x01,
+  DATA_TLV_RECEIVED = 0x02
+};
+
+// Maximum message body size (adjust as needed)
+static const size_t MAX_MESSAGE_BODY_SIZE = 250;
+
+// Message structure for the queue
+struct PowerSyncMessage {
+  MessageType type;
+  uint8_t body[MAX_MESSAGE_BODY_SIZE];
+  size_t body_length;
+  uint8_t src_addr[6];  // Source MAC address for received packets
+  int rssi;             // RSSI for received packets
+};
+
 class PowerSyncComponent : public Component {
  public:
   PowerSyncComponent() = default;
+  ~PowerSyncComponent();
 
   // Configuration setters
   void set_channel(uint8_t channel) { channel_ = channel; }
@@ -83,6 +103,7 @@ class PowerSyncComponent : public Component {
   void set_ac_frequency(float frequency);
   void set_ac_power(float power);
   void trigger_broadcast();
+  void send_tlv_command();
 
  protected:
   // Configuration
@@ -128,6 +149,10 @@ class PowerSyncComponent : public Component {
   TaskHandle_t espnow_task_handle_ = nullptr;
   static const uint32_t ESPNOW_TASK_STACK_SIZE = 4096;
   static const UBaseType_t ESPNOW_TASK_PRIORITY = 5;
+
+  // Message queue related
+  QueueHandle_t message_queue_ = nullptr;
+  static const uint32_t MESSAGE_QUEUE_SIZE = 10;
 
   // ESP-NOW methods
   void init_espnow_();

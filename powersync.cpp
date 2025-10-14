@@ -9,6 +9,7 @@
 #include <string.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <freertos/queue.h>
 
 namespace esphome
 {
@@ -16,6 +17,27 @@ namespace powersync
 {
 
 PowerSyncComponent *PowerSyncComponent::instance_ = nullptr;
+
+PowerSyncComponent::~PowerSyncComponent()
+{
+    // Clean up message queue
+    if (this->message_queue_ != nullptr) {
+        vQueueDelete(this->message_queue_);
+        this->message_queue_ = nullptr;
+    }
+    
+    // Clean up ESP-NOW task
+    if (this->espnow_task_handle_ != nullptr) {
+        vTaskDelete(this->espnow_task_handle_);
+        this->espnow_task_handle_ = nullptr;
+    }
+    
+    // Deinitialize ESP-NOW
+    if (this->espnow_ready_) {
+        esp_now_deinit();
+        this->espnow_ready_ = false;
+    }
+}
 
 void PowerSyncComponent::setup()
 {
@@ -29,6 +51,14 @@ void PowerSyncComponent::setup()
 
     // Initialize ESP-NOW
     this->init_espnow_();
+
+    // Create message queue for communication with ESP-NOW task
+    this->message_queue_ = xQueueCreate(MESSAGE_QUEUE_SIZE, sizeof(PowerSyncMessage));
+    if (this->message_queue_ == nullptr) {
+        ESP_LOGE(TAG, "Failed to create message queue");
+        return;
+    }
+    ESP_LOGI(TAG, "Message queue created successfully");
 
     // Create and start the ESP-NOW dedicated task
     BaseType_t result = xTaskCreate(
@@ -211,11 +241,11 @@ void PowerSyncComponent::broadcast_tlv_data_()
 
 void PowerSyncComponent::handle_packet_received_(const uint8_t *src_addr, const uint8_t *data, int len, int rssi)
 {
-    ESP_LOGI(TAG, "Received ESP-NOW broadcast packet:");
-    ESP_LOGI(TAG, "- Source MAC: %02X:%02X:%02X:%02X:%02X:%02X",
+    ESP_LOGD(TAG, "Received ESP-NOW broadcast packet:");
+    ESP_LOGD(TAG, "- Source MAC: %02X:%02X:%02X:%02X:%02X:%02X",
              src_addr[0], src_addr[1], src_addr[2], src_addr[3], src_addr[4], src_addr[5]);
-    ESP_LOGI(TAG, "- Data length: %d bytes", len);
-    ESP_LOGI(TAG, "- RSSI: %d dBm", rssi);
+    ESP_LOGD(TAG, "- Data length: %d bytes", len);
+    ESP_LOGD(TAG, "- RSSI: %d dBm", rssi);
 
     // Log first few bytes of data for debugging
     if (len > 0) {
@@ -225,10 +255,32 @@ void PowerSyncComponent::handle_packet_received_(const uint8_t *src_addr, const 
             snprintf(hex_byte, sizeof(hex_byte), "%02X ", data[i]);
             hex_data += hex_byte;
         }
-        ESP_LOGI(TAG, "- Data content (first 16 bytes): %s", hex_data.c_str());
+        ESP_LOGV(TAG, "- Data content (first 16 bytes): %s", hex_data.c_str());
     }
 
-    ESP_LOGI(TAG, "📦 Trigger packet reception notification effect");
+    // Send packet data to message queue
+    if (this->message_queue_ != nullptr && len > 0) {
+        PowerSyncMessage msg;
+        msg.type = DATA_TLV_RECEIVED;
+        msg.rssi = rssi;
+        
+        // Copy source MAC address
+        memcpy(msg.src_addr, src_addr, 6);
+        
+        // Copy packet data (limit to maximum message body size)
+        msg.body_length = std::min(static_cast<size_t>(len), MAX_MESSAGE_BODY_SIZE);
+        memcpy(msg.body, data, msg.body_length);
+        
+        // Send to queue (non-blocking)
+        BaseType_t result = xQueueSend(this->message_queue_, &msg, 0);
+        if (result != pdPASS) {
+            ESP_LOGW(TAG, "Failed to send received packet to message queue (queue full)");
+        } else {
+            ESP_LOGD(TAG, "Packet sent to message queue successfully");
+        }
+    }
+
+    ESP_LOGD(TAG, "📦 Trigger packet reception notification effect");
     this->trigger_packet_received_effect_();
 }
 
@@ -447,6 +499,26 @@ void PowerSyncComponent::trigger_broadcast()
     this->broadcast_tlv_data_();
 }
 
+void PowerSyncComponent::send_tlv_command()
+{
+    if (this->message_queue_ != nullptr) {
+        PowerSyncMessage msg;
+        msg.type = CMD_SEND_TLV;
+        msg.body_length = 0;  // No body needed for command messages
+        msg.rssi = 0;         // Not applicable for command messages
+        memset(msg.src_addr, 0, 6);  // Not applicable for command messages
+        
+        BaseType_t result = xQueueSend(this->message_queue_, &msg, pdMS_TO_TICKS(100));
+        if (result != pdPASS) {
+            ESP_LOGW(TAG, "Failed to send CMD_SEND_TLV to message queue");
+        } else {
+            ESP_LOGD(TAG, "CMD_SEND_TLV sent to message queue successfully");
+        }
+    } else {
+        ESP_LOGE(TAG, "Message queue not initialized");
+    }
+}
+
 void PowerSyncComponent::simulate_ac_measurements_()
 {
     ESP_LOGI(TAG, "🎲 Simulating AC measurements with reasonable random values...");
@@ -505,6 +577,32 @@ void PowerSyncComponent::espnow_task_function_(void *pvParameters)
     while (true) {
         uint32_t now = millis();
         
+        // Process messages from the queue
+        PowerSyncMessage msg;
+        BaseType_t result = xQueueReceive(component->message_queue_, &msg, pdMS_TO_TICKS(10));
+        if (result == pdPASS) {
+            switch (msg.type) {
+                case CMD_SEND_TLV:
+                    ESP_LOGI(TAG, "Processing CMD_SEND_TLV message from queue");
+                    component->broadcast_tlv_data_();
+                    break;
+                    
+                case DATA_TLV_RECEIVED:
+                    ESP_LOGI(TAG, "Processing DATA_TLV_RECEIVED message from queue");
+                    ESP_LOGI(TAG, "- Source MAC: %02X:%02X:%02X:%02X:%02X:%02X",
+                             msg.src_addr[0], msg.src_addr[1], msg.src_addr[2], 
+                             msg.src_addr[3], msg.src_addr[4], msg.src_addr[5]);
+                    ESP_LOGI(TAG, "- Data length: %zu bytes", msg.body_length);
+                    ESP_LOGI(TAG, "- RSSI: %d dBm", msg.rssi);
+                    // Additional processing of received TLV data can be added here
+                    break;
+                    
+                default:
+                    ESP_LOGW(TAG, "Unknown message type received: %d", msg.type);
+                    break;
+            }
+        }
+        
         // Update system info at specified interval
         if (now - last_system_update_time >= component->system_update_interval_) {
             component->update_system_info_();
@@ -517,8 +615,7 @@ void PowerSyncComponent::espnow_task_function_(void *pvParameters)
             last_broadcast_time = now;
         }
         
-        // Yield to other tasks - use shorter delay for responsive system updates
-        vTaskDelay(pdMS_TO_TICKS(10)); // 10ms delay
+        // Note: We don't need additional delay here since xQueueReceive already provides a 10ms timeout
     }
 }
 
