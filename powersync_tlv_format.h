@@ -428,4 +428,94 @@ typedef struct {
 //   520.0W -> 520000mW (int32_t) -> TLV: [0x00, 0x07, 0xEF, 0x40]  
 //   -100.5W -> -100500mW (int32_t) -> TLV: [0xFF, 0xFE, 0x76, 0xDC]
 
+// ============================================================================
+// TLV Helper Functions (Pure C, compatible with C and C++ projects)
+// ============================================================================
+// These functions are placed at the end to ensure all constants are defined
+
+// Helper function to convert device role value to string
+// Pure C function compatible with both C and C++ projects
+// Usage: const char* name = tlv_device_role_to_string(role_value);
+static inline const char* tlv_device_role_to_string(uint8_t role) {
+    switch (role) {
+        case DEVICE_ROLE_UNKNOWN: return "UNKNOWN";
+        case DEVICE_ROLE_GRID_INPUT: return "GRID_INPUT";
+        case DEVICE_ROLE_INVERTER_AC_INPUT: return "INVERTER_AC_INPUT";
+        case DEVICE_ROLE_INVERTER_AC_OUTPUT: return "INVERTER_AC_OUTPUT";
+        case DEVICE_ROLE_INVERTER_DC_BATTERY: return "INVERTER_DC_BATTERY";
+        case DEVICE_ROLE_INVERTER_DC_GRID_POWER: return "INVERTER_DC_GRID_POWER";
+        case DEVICE_ROLE_SINKER_AC_HEATER: return "SINKER_AC_HEATER";
+        case DEVICE_ROLE_SINKER_DC_HEATER: return "SINKER_DC_HEATER";
+        case DEVICE_ROLE_SINKER_AC_VEHICLE_CHARGER: return "SINKER_AC_VEHICLE_CHARGER";
+        case DEVICE_ROLE_SINKER_DC_VEHICLE_CHARGER: return "SINKER_DC_VEHICLE_CHARGER";
+        default: return "INVALID";
+    }
+}
+
+// Helper function to convert TLV type value to string
+// Usage: const char* name = tlv_type_to_string(0x01);
+static inline const char* tlv_type_to_string(uint8_t type) {
+    switch (type) {
+        // Basic Types (0x00-0x0F)
+        case TLV_TYPE_UPTIME: return "UPTIME";
+        case TLV_TYPE_TIMESTAMP: return "TIMESTAMP";
+        case TLV_TYPE_DEVICE_ID: return "DEVICE_ID";
+        case TLV_TYPE_FIRMWARE_VER: return "FIRMWARE_VER";
+        case TLV_TYPE_MAC_ADDRESS: return "MAC_ADDRESS";
+        case TLV_TYPE_COMPILE_TIME: return "COMPILE_TIME";
+        case TLV_TYPE_FREE_MEMORY: return "FREE_MEMORY";
+        case TLV_TYPE_DEVICE_ROLE: return "DEVICE_ROLE";
+        
+        // Electrical Measurements (0x10-0x2F)
+        case TLV_TYPE_AC_VOLTAGE: return "AC_VOLTAGE";
+        case TLV_TYPE_AC_CURRENT: return "AC_CURRENT";
+        case TLV_TYPE_AC_FREQUENCY: return "AC_FREQUENCY";
+        case TLV_TYPE_AC_POWER: return "AC_POWER";
+        case TLV_TYPE_AC_POWER_FACTOR: return "AC_POWER_FACTOR";
+        
+        // Energy Measurements (0x30-0x4F)
+        case TLV_TYPE_ENERGY_TOTAL: return "ENERGY_TOTAL";
+        case TLV_TYPE_ENERGY_TODAY: return "ENERGY_TODAY";
+        
+        // Status and Flags (0x50-0x6F)
+        case TLV_TYPE_STATUS_FLAGS: return "STATUS_FLAGS";
+        case TLV_TYPE_ERROR_CODE: return "ERROR_CODE";
+        
+        // Environmental (0x70-0x8F)
+        case TLV_TYPE_TEMPERATURE: return "TEMPERATURE";
+        case TLV_TYPE_HUMIDITY: return "HUMIDITY";
+        
+        default: 
+            return (type >= TLV_TYPE_CUSTOM_START) ? "CUSTOM" : "UNKNOWN";
+    }
+}
+
+// Helper function to get expected data size for a TLV type
+// Returns 0 for variable-length types (strings)
+// Usage: uint8_t size = tlv_type_expected_size(TLV_TYPE_UPTIME);
+static inline uint8_t tlv_type_expected_size(uint8_t type) {
+    switch (type) {
+        case TLV_TYPE_UPTIME: return TLV_SIZE_UPTIME;
+        case TLV_TYPE_TIMESTAMP: return TLV_SIZE_TIMESTAMP;
+        case TLV_TYPE_DEVICE_ID: return 0; // Variable length
+        case TLV_TYPE_FIRMWARE_VER: return 0; // Variable length
+        case TLV_TYPE_MAC_ADDRESS: return TLV_SIZE_MAC_ADDRESS;
+        case TLV_TYPE_COMPILE_TIME: return 0; // Variable length
+        case TLV_TYPE_FREE_MEMORY: return TLV_SIZE_FREE_MEMORY;
+        case TLV_TYPE_DEVICE_ROLE: return TLV_SIZE_DEVICE_ROLE;
+        case TLV_TYPE_AC_VOLTAGE: return TLV_SIZE_AC_VOLTAGE;
+        case TLV_TYPE_AC_CURRENT: return TLV_SIZE_AC_CURRENT;
+        case TLV_TYPE_AC_FREQUENCY: return TLV_SIZE_AC_FREQUENCY;
+        case TLV_TYPE_AC_POWER: return TLV_SIZE_AC_POWER;
+        case TLV_TYPE_AC_POWER_FACTOR: return TLV_SIZE_AC_POWER_FACTOR;
+        case TLV_TYPE_ENERGY_TOTAL: return TLV_SIZE_ENERGY_TOTAL;
+        case TLV_TYPE_ENERGY_TODAY: return TLV_SIZE_ENERGY_TODAY;
+        case TLV_TYPE_STATUS_FLAGS: return TLV_SIZE_STATUS_FLAGS;
+        case TLV_TYPE_ERROR_CODE: return TLV_SIZE_ERROR_CODE;
+        case TLV_TYPE_TEMPERATURE: return TLV_SIZE_TEMPERATURE;
+        case TLV_TYPE_HUMIDITY: return TLV_SIZE_HUMIDITY;
+        default: return 0; // Unknown or variable length
+    }
+}
+
 #endif // ESPHOME_TLV_FORMAT_H

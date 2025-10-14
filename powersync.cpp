@@ -396,8 +396,13 @@ void PowerSyncComponent::add_tlv_device_role_(std::vector<uint8_t> &payload)
     ESP_LOGI(TAG, "Adding DEVICE_ROLE TLV");
     payload.push_back(TLV_TYPE_DEVICE_ROLE);
     payload.push_back(1); // Length: 1 byte
-    payload.push_back(static_cast<uint8_t>(this->device_role_));
-    ESP_LOGI(TAG, "- Device role: %d", static_cast<uint8_t>(this->device_role_));
+    uint8_t role_value = static_cast<uint8_t>(this->device_role_);
+    payload.push_back(role_value);
+    
+    // Use shared TLV helper function from powersync_tlv_format.h (C-compatible)
+    ESP_LOGI(TAG, "- Device role: %s (%d)", 
+             tlv_device_role_to_string(role_value), 
+             role_value);
 }
 
 void PowerSyncComponent::add_tlv_free_memory_(std::vector<uint8_t> &payload)
