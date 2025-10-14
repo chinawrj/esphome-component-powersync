@@ -1,6 +1,6 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import sensor, light, output
+from esphome.components import sensor, binary_sensor, light, output
 from esphome.const import (
     CONF_ID,
     CONF_CHANNEL,
@@ -37,6 +37,7 @@ CONF_AC_FREQUENCY_SENSOR = "ac_frequency_sensor"
 CONF_AC_POWER_SENSOR = "ac_power_sensor"
 CONF_BUTTON_PRESS_COUNT_SENSOR = "button_press_count_sensor"
 CONF_DEVICE_ROLE = "device_role"
+CONF_DLT645_RELAY_TRIP_SENSOR = "dlt645_relay_trip_sensor"
 
 # Device Role Enum
 DeviceRole = powersync_ns.enum("DeviceRole")
@@ -95,6 +96,7 @@ CONFIG_SCHEMA = cv.Schema(
             unit_of_measurement="times",
         ),
         cv.Optional(CONF_DEVICE_ROLE, default="UNKNOWN"): cv.enum(DEVICE_ROLES, upper=True),
+        cv.Optional(CONF_DLT645_RELAY_TRIP_SENSOR): cv.use_id(binary_sensor.BinarySensor),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -139,6 +141,11 @@ async def to_code(config):
     if CONF_BUTTON_PRESS_COUNT_SENSOR in config:
         sens = await sensor.new_sensor(config[CONF_BUTTON_PRESS_COUNT_SENSOR])
         cg.add(var.set_button_press_count_sensor(sens))
+
+    # Configure DLT645 relay trip binary sensor
+    if CONF_DLT645_RELAY_TRIP_SENSOR in config:
+        sens = await cg.get_variable(config[CONF_DLT645_RELAY_TRIP_SENSOR])
+        cg.add(var.set_dlt645_relay_trip_sensor(sens))
 
     # Add ESP-NOW dependency
     cg.add_library("ESP-NOW", None)

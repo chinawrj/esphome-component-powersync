@@ -960,6 +960,9 @@ void PowerSyncComponent::espnow_task_function_(void *pvParameters)
             }
         }
         
+        // Make power management decisions every loop iteration (every 10ms due to queue timeout)
+        component->make_power_management_decisions_();
+        
         // Update system info at specified interval
         if (now - last_system_update_time >= component->system_update_interval_) {
             component->update_system_info_();
@@ -1062,6 +1065,56 @@ void PowerSyncComponent::update_device_state_(DeviceRole role, const uint8_t *sr
     if (!state.firmware_version.empty()) {
         ESP_LOGI(TAG, "   Firmware: %s", state.firmware_version.c_str());
     }
+}
+
+void PowerSyncComponent::make_power_management_decisions_()
+{
+    // This function is called periodically to make decisions based on:
+    // 1. Current device's role (this->device_role_)
+    // 2. Network-wide device states (this->device_states_[])
+    // 3. Own device state (this->device_states_[this->device_role_])
+    
+    // Strategy 1: INVERTER_AC_INPUT - Monitor solar inverter output for reverse power
+    if (this->device_role_ == ROLE_INVERTER_AC_INPUT) {
+        // Check if we have valid solar inverter output data
+        const DeviceState* solar_state = this->get_device_state(ROLE_SOLOAR_INVERTER_OUTPUT_TOTAL);
+        
+        if (solar_state != nullptr) {
+            // Solar inverter is active and reporting
+            ESP_LOGD(TAG, "🌞 Solar inverter detected - Power: %.2f W", solar_state->power);
+            
+            // Check if power is negative (reverse power flow)
+            if (solar_state->power < 0.0f) {
+                ESP_LOGW(TAG, "⚠️ Reverse power detected from solar inverter: %.2f W", solar_state->power);
+                ESP_LOGW(TAG, "🔌 Triggering DLT645 relay disconnect to prevent reverse feed");
+                
+                // Trigger relay trip via binary sensor (cross-module control)
+                if (this->dlt645_relay_trip_sensor_ != nullptr) {
+                    // Publish a state change to trigger the relay trip automation
+                    // The binary sensor state change will trigger the on_press event in YAML
+                    this->dlt645_relay_trip_sensor_->publish_state(true);
+                    
+                    ESP_LOGI(TAG, "✅ DLT645 relay trip command sent via binary sensor");
+                    
+                    // Reset the binary sensor state after a short delay to allow re-triggering
+                    // This is handled by the ESPHome automation framework
+                } else {
+                    ESP_LOGE(TAG, "❌ DLT645 relay trip sensor not configured!");
+                }
+            } else if (solar_state->power >= 0.0f) {
+                ESP_LOGD(TAG, "✅ Solar power is positive (forward flow): %.2f W - No action needed", solar_state->power);
+            }
+        } else {
+            ESP_LOGV(TAG, "ℹ️ Solar inverter data not available or expired");
+        }
+    }
+    
+    // Additional strategies can be added here for other device roles
+    // Example: SINKER role monitoring grid input and inverter output
+    // Example: INVERTER role monitoring battery state and grid input
+    
+    ESP_LOGV(TAG, "Power management decision cycle completed for role: %s", 
+             tlv_device_role_to_string(this->device_role_));
 }
 
 void PowerSyncComponent::dump_device_states_table_()

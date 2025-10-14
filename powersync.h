@@ -4,6 +4,7 @@
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 #include "esphome/components/sensor/sensor.h"
+#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/light/light_state.h"
 #include "esphome/components/output/binary_output.h"
 
@@ -141,6 +142,9 @@ class PowerSyncComponent : public Component {
   void set_ac_frequency_sensor(esphome::sensor::Sensor *sensor) { ac_frequency_sensor_ = sensor; }
   void set_ac_power_sensor(esphome::sensor::Sensor *sensor) { ac_power_sensor_ = sensor; }
   void set_button_press_count_sensor(esphome::sensor::Sensor *sensor) { button_press_count_sensor_ = sensor; }
+  
+  // DLT645 relay control binary sensor setter (for cross-module control)
+  void set_dlt645_relay_trip_sensor(esphome::binary_sensor::BinarySensor *sensor) { dlt645_relay_trip_sensor_ = sensor; }
 
   // Component lifecycle
   void setup() override;
@@ -179,6 +183,9 @@ class PowerSyncComponent : public Component {
   sensor::Sensor *ac_frequency_sensor_ = nullptr;
   sensor::Sensor *ac_power_sensor_ = nullptr;
   sensor::Sensor *button_press_count_sensor_ = nullptr;
+  
+  // DLT645 relay control binary sensor (for cross-module control)
+  binary_sensor::BinarySensor *dlt645_relay_trip_sensor_ = nullptr;
 
   // Internal state
   bool espnow_ready_ = false;
@@ -232,6 +239,9 @@ class PowerSyncComponent : public Component {
   // Device state management methods
   void update_device_state_(DeviceRole role, const uint8_t *src_addr, int rssi);
   void dump_device_states_table_();  // Dump device states in table format
+  
+  // Decision-making method based on network-wide device states
+  void make_power_management_decisions_();
   
   // Simulation method
   void simulate_ac_measurements_();
