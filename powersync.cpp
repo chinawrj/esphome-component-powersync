@@ -7,6 +7,8 @@
 #include <esp_system.h>
 #include <esp_wifi.h>
 #include <string.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 namespace esphome
 {
@@ -28,28 +30,36 @@ void PowerSyncComponent::setup()
     // Initialize ESP-NOW
     this->init_espnow_();
 
+    // Create and start the ESP-NOW dedicated task
+    BaseType_t result = xTaskCreate(
+        espnow_task_function_,                    // Task function
+        "PowerSyncESPNOW",                        // Task name
+        ESPNOW_TASK_STACK_SIZE,                   // Stack size
+        this,                                     // Parameters passed to task
+        ESPNOW_TASK_PRIORITY,                     // Priority
+        &this->espnow_task_handle_               // Task handle
+    );
+    
+    if (result != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create ESP-NOW task");
+        return;
+    }
+    
     ESP_LOGCONFIG(TAG, "PowerSync component setup completed");
     ESP_LOGCONFIG(TAG, "  Channel: %d", this->channel_);
     ESP_LOGCONFIG(TAG, "  Auto add peer: %s", this->auto_add_peer_ ? "YES" : "NO");
     ESP_LOGCONFIG(TAG, "  Broadcast interval: %lu ms", this->broadcast_interval_);
     ESP_LOGCONFIG(TAG, "  System update interval: %lu ms", this->system_update_interval_);
+    ESP_LOGCONFIG(TAG, "  ESP-NOW task created with priority: %d", ESPNOW_TASK_PRIORITY);
 }
 
 void PowerSyncComponent::loop()
 {
-    uint32_t now = millis();
-
-    // Update system info at specified interval
-    if (now - this->last_system_update_time_ >= this->system_update_interval_) {
-        this->update_system_info_();
-        this->last_system_update_time_ = now;
-    }
-
-    // Broadcast TLV data at specified interval
-    if (this->espnow_ready_ && now - this->last_broadcast_time_ >= this->broadcast_interval_) {
-        this->broadcast_tlv_data_();
-        this->last_broadcast_time_ = now;
-    }
+    // ESP-NOW operations are now handled by a dedicated FreeRTOS task
+    // This loop method is kept minimal for any future non-ESP-NOW operations
+    // The dedicated task handles:
+    // - System info updates at system_update_interval_ 
+    // - TLV data broadcasting at broadcast_interval_
 }
 
 void PowerSyncComponent::init_espnow_()
@@ -480,6 +490,36 @@ void PowerSyncComponent::simulate_ac_measurements_()
     ESP_LOGI(TAG, "   - AC Frequency: %.2f Hz", this->tlv_ac_frequency_);
     ESP_LOGI(TAG, "   - AC Power: %.3f W (%d mW)", simulated_power, this->tlv_ac_power_mw_);
     ESP_LOGI(TAG, "   - Power Factor: %.2f", power_factor);
+}
+
+// FreeRTOS task function implementation
+void PowerSyncComponent::espnow_task_function_(void *pvParameters)
+{
+    PowerSyncComponent *component = static_cast<PowerSyncComponent *>(pvParameters);
+    
+    ESP_LOGI(TAG, "ESP-NOW task started");
+    
+    uint32_t last_broadcast_time = 0;
+    uint32_t last_system_update_time = 0;
+    
+    while (true) {
+        uint32_t now = millis();
+        
+        // Update system info at specified interval
+        if (now - last_system_update_time >= component->system_update_interval_) {
+            component->update_system_info_();
+            last_system_update_time = now;
+        }
+        
+        // Broadcast TLV data at specified interval
+        if (component->espnow_ready_ && now - last_broadcast_time >= component->broadcast_interval_) {
+            component->broadcast_tlv_data_();
+            last_broadcast_time = now;
+        }
+        
+        // Yield to other tasks - use shorter delay for responsive system updates
+        vTaskDelay(pdMS_TO_TICKS(10)); // 10ms delay
+    }
 }
 
 } // namespace powersync

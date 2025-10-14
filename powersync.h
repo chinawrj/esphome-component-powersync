@@ -12,6 +12,8 @@
 #include <esp_wifi.h>
 #include <esp_system.h>
 #include <esp_mac.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #endif
 
 #include <cstdint>
@@ -72,7 +74,7 @@ class PowerSyncComponent : public Component {
   // Component lifecycle
   void setup() override;
   void loop() override;
-  float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
+  float get_setup_priority() const override { return setup_priority::WIFI; }
 
   // Public methods for external access
   void increment_button_press_count();
@@ -122,6 +124,11 @@ class PowerSyncComponent : public Component {
   uint32_t last_broadcast_time_ = 0;
   uint32_t last_system_update_time_ = 0;
 
+  // FreeRTOS task related
+  TaskHandle_t espnow_task_handle_ = nullptr;
+  static const uint32_t ESPNOW_TASK_STACK_SIZE = 4096;
+  static const UBaseType_t ESPNOW_TASK_PRIORITY = 5;
+
   // ESP-NOW methods
   void init_espnow_();
   void setup_system_info_();
@@ -161,6 +168,9 @@ class PowerSyncComponent : public Component {
   static void esp_now_send_cb_(const uint8_t *mac_addr, esp_now_send_status_t status);
   static void esp_now_recv_cb_(const esp_now_recv_info_t *info, const uint8_t *data, int len);
   static PowerSyncComponent *instance_;
+
+  // FreeRTOS task function
+  static void espnow_task_function_(void *pvParameters);
 };
 
 }  // namespace powersync
