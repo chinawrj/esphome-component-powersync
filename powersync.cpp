@@ -7,6 +7,9 @@
 #include <esp_system.h>
 #include <esp_wifi.h>
 #include <string.h>
+#include <algorithm>
+#include <array>
+#include <string>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
@@ -182,6 +185,26 @@ void PowerSyncComponent::setup_system_info_()
     ESP_LOGI(TAG, "  MAC: %02X:%02X:%02X:%02X:%02X:%02X",
              this->mac_address_bytes_[0], this->mac_address_bytes_[1], this->mac_address_bytes_[2],
              this->mac_address_bytes_[3], this->mac_address_bytes_[4], this->mac_address_bytes_[5]);
+    
+    // Initialize current device's state in device_states_ array
+    if (this->device_role_ < MAX_DEVICE_ROLES) {
+        DeviceState& my_state = this->device_states_[this->device_role_];
+        my_state.role = this->device_role_;
+        my_state.is_valid = true;
+        my_state.last_update_time = millis();
+        my_state.firmware_version = this->firmware_version_;
+        memcpy(my_state.src_addr, this->mac_address_bytes_, 6);
+        my_state.rssi = 0;  // Not applicable for self
+        my_state.uptime = 0;  // Will be updated in update_system_info_()
+        my_state.voltage = 0.0f;
+        my_state.current = 0.0f;
+        my_state.power = 0.0f;
+        
+        ESP_LOGI(TAG, "  Device role: %s (index: %d)", tlv_device_role_to_string(this->device_role_), this->device_role_);
+        ESP_LOGI(TAG, "  Initialized self in device_states_[%d]", this->device_role_);
+    } else {
+        ESP_LOGW(TAG, "  ⚠️ Device role %d is invalid, not initializing device_states_ entry", this->device_role_);
+    }
 }
 
 void PowerSyncComponent::update_system_info_()
@@ -191,6 +214,15 @@ void PowerSyncComponent::update_system_info_()
 
     // Update free memory
     this->free_memory_ = esp_get_free_heap_size();
+    
+    // Update current device's uptime in device_states_ array
+    if (this->device_role_ < MAX_DEVICE_ROLES) {
+        DeviceState& my_state = this->device_states_[this->device_role_];
+        if (my_state.is_valid && my_state.role == this->device_role_) {
+            my_state.uptime = this->uptime_seconds_;
+            my_state.last_update_time = millis();
+        }
+    }
 }
 
 std::vector<uint8_t> PowerSyncComponent::build_tlv_packet_()
@@ -478,22 +510,55 @@ void PowerSyncComponent::increment_button_press_count()
 
 void PowerSyncComponent::set_ac_voltage(float voltage)
 {
+    // Update TLV transmission variable
     this->tlv_ac_voltage_ = voltage;
+    
+    // Update device_states_ array for current device
+    if (this->device_role_ < MAX_DEVICE_ROLES) {
+        DeviceState& my_state = this->device_states_[this->device_role_];
+        my_state.voltage = voltage;
+        my_state.last_update_time = millis();
+        my_state.is_valid = true;
+        my_state.role = this->device_role_;
+    }
 }
 
 void PowerSyncComponent::set_ac_current(float current)
 {
+    // Update TLV transmission variable (convert A to mA)
     this->tlv_ac_current_ma_ = static_cast<int32_t>(current * 1000.0f);
+    
+    // Update device_states_ array for current device
+    if (this->device_role_ < MAX_DEVICE_ROLES) {
+        DeviceState& my_state = this->device_states_[this->device_role_];
+        my_state.current = current;
+        my_state.last_update_time = millis();
+        my_state.is_valid = true;
+        my_state.role = this->device_role_;
+    }
 }
 
 void PowerSyncComponent::set_ac_frequency(float frequency)
 {
+    // Update TLV transmission variable
     this->tlv_ac_frequency_ = frequency;
+    
+    // Note: frequency is not stored in DeviceState, only used for TLV broadcast
 }
 
 void PowerSyncComponent::set_ac_power(float power)
 {
+    // Update TLV transmission variable (convert W to mW)
     this->tlv_ac_power_mw_ = static_cast<int32_t>(power * 1000.0f);
+    
+    // Update device_states_ array for current device
+    if (this->device_role_ < MAX_DEVICE_ROLES) {
+        DeviceState& my_state = this->device_states_[this->device_role_];
+        my_state.power = power;
+        my_state.last_update_time = millis();
+        my_state.is_valid = true;
+        my_state.role = this->device_role_;
+    }
 }
 
 void PowerSyncComponent::trigger_broadcast()
@@ -535,20 +600,22 @@ void PowerSyncComponent::simulate_ac_measurements_()
     float base_voltage = 220.0f;
     int32_t voltage_offset = (int32_t)(time_sec % 200) - 100;  // -100 to +100
     float voltage_variation = (float)voltage_offset * 0.1f;    // ±10V variation
-    this->tlv_ac_voltage_ = base_voltage + voltage_variation;
+    float simulated_voltage = base_voltage + voltage_variation;
+    this->set_ac_voltage(simulated_voltage);  // Use setter function instead of direct member access
     
     // Generate reasonable AC current (-5A to +5A, allowing negative for reverse power flow)
     float base_current = 0.0f;  // Center around 0A
     int32_t current_offset = (int32_t)((time_sec + 50) % 100) - 50;  // -50 to +50
     float current_variation = (float)current_offset * 0.1f;           // ±5A variation
     float simulated_current = base_current + current_variation;
-    this->tlv_ac_current_ma_ = static_cast<int32_t>(simulated_current * 1000.0f);
+    this->set_ac_current(simulated_current);  // Use setter function instead of direct member access
     
     // Generate reasonable AC frequency (49.8Hz to 50.2Hz)
     float base_frequency = 50.0f;
     int32_t frequency_offset = (int32_t)((time_sec + 25) % 40) - 20;  // -20 to +20
     float frequency_variation = (float)frequency_offset * 0.01f;      // ±0.2Hz variation
-    this->tlv_ac_frequency_ = base_frequency + frequency_variation;
+    float simulated_frequency = base_frequency + frequency_variation;
+    this->set_ac_frequency(simulated_frequency);  // Use setter function instead of direct member access
     
     // Calculate power from voltage and current (with some power factor simulation)
     // Power factor should be positive, but power can be negative if current is negative
@@ -558,13 +625,13 @@ void PowerSyncComponent::simulate_ac_measurements_()
     if (power_factor > 1.0f) power_factor = 1.0f;
     
     // Power = Voltage × Current × Power_Factor (can be negative for reverse power flow)
-    float simulated_power = this->tlv_ac_voltage_ * simulated_current * power_factor;
-    this->tlv_ac_power_mw_ = static_cast<int32_t>(simulated_power * 1000.0f);
+    float simulated_power = simulated_voltage * simulated_current * power_factor;
+    this->set_ac_power(simulated_power);  // Use setter function instead of direct member access
     
     ESP_LOGI(TAG, "🎲 Simulated values:");
-    ESP_LOGI(TAG, "   - AC Voltage: %.1f V", this->tlv_ac_voltage_);
+    ESP_LOGI(TAG, "   - AC Voltage: %.1f V", simulated_voltage);
     ESP_LOGI(TAG, "   - AC Current: %.3f A (%d mA)", simulated_current, this->tlv_ac_current_ma_);
-    ESP_LOGI(TAG, "   - AC Frequency: %.2f Hz", this->tlv_ac_frequency_);
+    ESP_LOGI(TAG, "   - AC Frequency: %.2f Hz", simulated_frequency);
     ESP_LOGI(TAG, "   - AC Power: %.3f W (%d mW)", simulated_power, this->tlv_ac_power_mw_);
     ESP_LOGI(TAG, "   - Power Factor: %.2f", power_factor);
 }
@@ -905,6 +972,13 @@ void PowerSyncComponent::espnow_task_function_(void *pvParameters)
             last_broadcast_time = now;
         }
         
+        // Dump device states table every 5 seconds
+        static uint32_t last_dump_time = 0;
+        if (now - last_dump_time >= 5000) {  // 5 seconds interval
+            component->dump_device_states_table_();
+            last_dump_time = now;
+        }
+        
         // Note: We don't need additional delay here since xQueueReceive already provides a 10ms timeout
     }
 }
@@ -988,6 +1062,247 @@ void PowerSyncComponent::update_device_state_(DeviceRole role, const uint8_t *sr
     if (!state.firmware_version.empty()) {
         ESP_LOGI(TAG, "   Firmware: %s", state.firmware_version.c_str());
     }
+}
+
+void PowerSyncComponent::dump_device_states_table_()
+{
+    enum class ColumnAlign
+    {
+        Left,
+        Right,
+        Center
+    };
+
+    static constexpr size_t COLUMN_COUNT = 9;
+    static const std::array<const char *, COLUMN_COUNT> COLUMN_HEADERS = {
+        "Role ID",
+        "Device Name",
+        "Active",
+        "Voltage",
+        "Current",
+        "Power",
+        "RSSI",
+        "Uptime",
+        "Firmware"
+    };
+    static const std::array<const char *, COLUMN_COUNT> COLUMN_UNITS = {
+        "",
+        "",
+        "",
+        "(V)",
+        "(A)",
+        "(W)",
+        "(dBm)",
+        "(hrs)",
+        ""
+    };
+    static const std::array<size_t, COLUMN_COUNT> COLUMN_WIDTHS = {
+        7,   // Role ID
+        25,  // Device Name (fits *_VEHICLE_CHARGER)
+        6,   // Active
+        7,   // Voltage
+        7,   // Current
+        8,   // Power
+        5,   // RSSI
+        9,   // Uptime
+        20   // Firmware
+    };
+    static const std::array<ColumnAlign, COLUMN_COUNT> DATA_ALIGNMENTS = {
+        ColumnAlign::Left,
+        ColumnAlign::Left,
+        ColumnAlign::Center,
+        ColumnAlign::Right,
+        ColumnAlign::Right,
+        ColumnAlign::Right,
+        ColumnAlign::Right,
+        ColumnAlign::Right,
+        ColumnAlign::Left
+    };
+
+    const auto make_uniform_alignment = [](ColumnAlign align) {
+        std::array<ColumnAlign, COLUMN_COUNT> result{};
+        result.fill(align);
+        return result;
+    };
+
+    const std::array<ColumnAlign, COLUMN_COUNT> HEADER_ALIGNMENTS = make_uniform_alignment(ColumnAlign::Center);
+    const std::array<ColumnAlign, COLUMN_COUNT> UNIT_ALIGNMENTS = make_uniform_alignment(ColumnAlign::Center);
+
+    const auto format_text = [](const std::string &text, size_t width, ColumnAlign align) -> std::string {
+        if (text.size() >= width) {
+            return text.substr(0, width);
+        }
+
+        const size_t padding = width - text.size();
+        switch (align) {
+            case ColumnAlign::Left:
+                return text + std::string(padding, ' ');
+            case ColumnAlign::Right:
+                return std::string(padding, ' ') + text;
+            case ColumnAlign::Center: {
+                const size_t left_padding = padding / 2;
+                const size_t right_padding = padding - left_padding;
+                return std::string(left_padding, ' ') + text + std::string(right_padding, ' ');
+            }
+        }
+        return text;
+    };
+
+    size_t total_row_width = 1; // Leading separator
+    for (size_t width : COLUMN_WIDTHS) {
+        total_row_width += width + 3; // space + field + space + separator
+    }
+
+    const auto format_row = [&](const std::array<std::string, COLUMN_COUNT> &cells,
+                                const std::array<ColumnAlign, COLUMN_COUNT> &alignments) -> std::string {
+        std::string line;
+        line.reserve(total_row_width);
+        line.push_back('|');
+        for (size_t idx = 0; idx < COLUMN_COUNT; ++idx) {
+            line.push_back(' ');
+            line += format_text(cells[idx], COLUMN_WIDTHS[idx], alignments[idx]);
+            line.push_back(' ');
+            line.push_back('|');
+        }
+        return line;
+    };
+
+    const auto make_border = [&](char fill_char) -> std::string {
+        std::string line;
+        line.reserve(total_row_width);
+        line.push_back('+');
+        for (size_t width : COLUMN_WIDTHS) {
+            line.append(width + 2, fill_char);
+            line.push_back('+');
+        }
+        return line;
+    };
+
+    const std::string outer_border = make_border('=');
+    const std::string inner_border = make_border('-');
+    const size_t line_width = outer_border.size();
+    const size_t inner_width = (line_width > 2) ? (line_width - 2) : 0;
+
+    const auto make_span_line = [&](const std::string &text, ColumnAlign align) -> std::string {
+        std::string line(line_width, ' ');
+        if (line_width == 0) {
+            return line;
+        }
+        line.front() = '|';
+        line.back() = '|';
+        const size_t copy_len = std::min(text.size(), inner_width);
+
+        size_t start = 1;
+        if (align == ColumnAlign::Left) {
+            start = 1;
+        } else if (align == ColumnAlign::Right) {
+            start = 1 + inner_width - copy_len;
+        } else {
+            start = 1 + (inner_width - copy_len) / 2;
+        }
+
+        line.replace(start, copy_len, text.substr(0, copy_len));
+        return line;
+    };
+
+    std::array<std::string, COLUMN_COUNT> header_cells{};
+    for (size_t idx = 0; idx < COLUMN_COUNT; ++idx) {
+        header_cells[idx] = COLUMN_HEADERS[idx];
+    }
+
+    std::array<std::string, COLUMN_COUNT> unit_cells{};
+    bool has_units = false;
+    for (size_t idx = 0; idx < COLUMN_COUNT; ++idx) {
+        if (COLUMN_UNITS[idx][0] != '\0') {
+            unit_cells[idx] = COLUMN_UNITS[idx];
+            has_units = true;
+        }
+    }
+
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "%s", outer_border.c_str());
+    const std::string title_line = make_span_line("POWERSYNC NETWORK DEVICE STATES TABLE", ColumnAlign::Center);
+    ESP_LOGI(TAG, "%s", title_line.c_str());
+    ESP_LOGI(TAG, "%s", outer_border.c_str());
+
+    const std::string header_line = format_row(header_cells, HEADER_ALIGNMENTS);
+    ESP_LOGI(TAG, "%s", header_line.c_str());
+
+    if (has_units) {
+        const std::string unit_line = format_row(unit_cells, UNIT_ALIGNMENTS);
+        ESP_LOGI(TAG, "%s", unit_line.c_str());
+    }
+
+    ESP_LOGI(TAG, "%s", inner_border.c_str());
+    
+    uint32_t now = millis();
+    int active_count = 0;
+    
+    for (size_t i = 0; i < MAX_DEVICE_ROLES; i++) {
+        const DeviceState &state = this->device_states_[i];
+        
+        std::array<std::string, COLUMN_COUNT> row_cells{};
+        row_cells[0] = "[" + std::to_string(static_cast<unsigned>(i)) + "]";
+        row_cells[1] = tlv_device_role_to_string(i);
+        
+        const bool is_active = state.is_valid && (now - state.last_update_time <= DEVICE_STATE_TIMEOUT);
+        row_cells[2] = is_active ? "YES" : "NO";
+        
+        if (is_active) {
+            active_count++;
+            
+            char buffer[32];
+            
+            snprintf(buffer, sizeof(buffer), "%.1f", state.voltage);
+            row_cells[3] = buffer;
+            
+            snprintf(buffer, sizeof(buffer), "%.3f", state.current);
+            row_cells[4] = buffer;
+            
+            snprintf(buffer, sizeof(buffer), "%.2f", state.power);
+            row_cells[5] = buffer;
+            
+            snprintf(buffer, sizeof(buffer), "%d", state.rssi);
+            row_cells[6] = buffer;
+            
+            const float uptime_hours = state.uptime / 3600.0f;
+            snprintf(buffer, sizeof(buffer), "%.2f", uptime_hours);
+            row_cells[7] = buffer;
+            
+            if (!state.firmware_version.empty()) {
+                row_cells[8] = state.firmware_version;
+            } else {
+                row_cells[8] = "N/A";
+            }
+        } else if (state.is_valid) {
+            for (size_t idx = 3; idx <= 7; ++idx) {
+                row_cells[idx] = "---";
+            }
+            
+            const uint32_t time_since_update = (now - state.last_update_time) / 1000;  // seconds
+            row_cells[8] = "timeout: " + std::to_string(static_cast<unsigned long>(time_since_update)) + "s ago";
+        } else {
+            for (size_t idx = 3; idx <= 7; ++idx) {
+                row_cells[idx] = "---";
+            }
+            row_cells[8] = "not configured";
+        }
+        
+        const std::string data_line = format_row(row_cells, DATA_ALIGNMENTS);
+        ESP_LOGI(TAG, "%s", data_line.c_str());
+    }
+    
+    ESP_LOGI(TAG, "%s", inner_border.c_str());
+    
+    char summary_buffer[160];
+    snprintf(summary_buffer, sizeof(summary_buffer),
+             "Summary: %d active device(s) out of %d total slots | Timeout: %d seconds",
+             active_count, MAX_DEVICE_ROLES, DEVICE_STATE_TIMEOUT / 1000);
+    
+    const std::string summary_line = make_span_line(summary_buffer, ColumnAlign::Left);
+    ESP_LOGI(TAG, "%s", summary_line.c_str());
+    ESP_LOGI(TAG, "%s", outer_border.c_str());
+    ESP_LOGI(TAG, "");
 }
 
 } // namespace powersync

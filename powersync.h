@@ -227,6 +227,7 @@ class PowerSyncComponent : public Component {
   
   // Device state management methods
   void update_device_state_(DeviceRole role, const uint8_t *src_addr, int rssi);
+  void dump_device_states_table_();  // Dump device states in table format
   
   // Simulation method
   void simulate_ac_measurements_();
