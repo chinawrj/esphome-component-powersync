@@ -1,6 +1,6 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import sensor, binary_sensor, light, output
+from esphome.components import sensor, binary_sensor
 from esphome.const import (
     CONF_ID,
     CONF_CHANNEL,
@@ -22,8 +22,6 @@ CODEOWNERS = ["@chinawrj"]
 powersync_ns = cg.esphome_ns.namespace("powersync")
 PowerSyncComponent = powersync_ns.class_("PowerSyncComponent", cg.Component)
 
-CONF_RGB_POWER_ENABLE = "rgb_power_enable"
-CONF_RGB_STRIP = "rgb_strip"
 CONF_BROADCAST_INTERVAL = "broadcast_interval"
 CONF_SYSTEM_UPDATE_INTERVAL = "system_update_interval"
 CONF_AUTO_ADD_PEER = "auto_add_peer"
@@ -62,8 +60,6 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_BROADCAST_INTERVAL, default="5s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_SYSTEM_UPDATE_INTERVAL, default="100ms"): cv.positive_time_period_milliseconds,
         cv.Required(CONF_FIRMWARE_VERSION): cv.string_strict,
-        cv.Required(CONF_RGB_POWER_ENABLE): cv.use_id(output.BinaryOutput),
-        cv.Required(CONF_RGB_STRIP): cv.use_id(light.LightState),
         cv.Optional(CONF_AC_VOLTAGE_SENSOR): sensor.sensor_schema(
             device_class=DEVICE_CLASS_VOLTAGE,
             state_class=STATE_CLASS_MEASUREMENT,
@@ -110,13 +106,6 @@ async def to_code(config):
     cg.add(var.set_system_update_interval(config[CONF_SYSTEM_UPDATE_INTERVAL]))
     cg.add(var.set_firmware_version(config[CONF_FIRMWARE_VERSION]))
     cg.add(var.set_device_role(config[CONF_DEVICE_ROLE]))
-
-    # Set RGB output and strip references
-    rgb_power = await cg.get_variable(config[CONF_RGB_POWER_ENABLE])
-    cg.add(var.set_rgb_power_enable(rgb_power))
-    
-    rgb_strip = await cg.get_variable(config[CONF_RGB_STRIP])
-    cg.add(var.set_rgb_strip(rgb_strip))
 
     # Configure optional sensors
     if CONF_AC_VOLTAGE_SENSOR in config:

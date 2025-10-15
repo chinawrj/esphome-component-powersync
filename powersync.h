@@ -5,8 +5,6 @@
 #include "esphome/core/log.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
-#include "esphome/components/light/light_state.h"
-#include "esphome/components/output/binary_output.h"
 
 #ifdef USE_ESP32
 #include <esp_now.h>
@@ -132,8 +130,6 @@ class PowerSyncComponent : public Component {
   void set_system_update_interval(uint32_t interval) { system_update_interval_ = interval; }
   void set_firmware_version(const std::string &version) { firmware_version_ = version; }
   void set_device_role(DeviceRole role) { device_role_ = role; }
-  void set_rgb_power_enable(esphome::output::BinaryOutput *output) { rgb_power_enable_ = output; }
-  void set_rgb_strip(esphome::light::LightState *light) { rgb_strip_ = light; }
 
   // Optional sensor setters
   void set_ac_voltage_sensor(esphome::sensor::Sensor *sensor) { ac_voltage_sensor_ = sensor; }
@@ -170,10 +166,6 @@ class PowerSyncComponent : public Component {
   bool auto_add_peer_ = true;
   uint32_t broadcast_interval_ = 5000;  // 5 seconds
   uint32_t system_update_interval_ = 100;  // 100ms
-
-  // Hardware references
-  output::BinaryOutput *rgb_power_enable_ = nullptr;
-  light::LightState *rgb_strip_ = nullptr;
 
   // Optional sensors
   sensor::Sensor *ac_voltage_sensor_ = nullptr;

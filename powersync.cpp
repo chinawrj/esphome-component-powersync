@@ -326,30 +326,16 @@ void PowerSyncComponent::handle_unknown_peer_(const uint8_t *src_addr, const uin
 
 void PowerSyncComponent::trigger_packet_received_effect_()
 {
-    if (this->rgb_power_enable_ != nullptr) {
-        this->rgb_power_enable_->turn_on();
-    }
-
-    if (this->rgb_strip_ != nullptr) {
-        auto call = this->rgb_strip_->turn_on();
-        call.set_effect("Packet Received");
-        call.set_brightness(0.9f);
-        call.perform();
-    }
+    // RGB LED effects have been removed
+    // This method is kept as a stub for backward compatibility
+    ESP_LOGD(TAG, "Packet received effect triggered (RGB removed)");
 }
 
 void PowerSyncComponent::trigger_alert_red_effect_()
 {
-    if (this->rgb_power_enable_ != nullptr) {
-        this->rgb_power_enable_->turn_on();
-    }
-
-    if (this->rgb_strip_ != nullptr) {
-        auto call = this->rgb_strip_->turn_on();
-        call.set_effect("Alert Red");
-        call.set_brightness(1.0f);
-        call.perform();
-    }
+    // RGB LED effects have been removed
+    // This method is kept as a stub for backward compatibility
+    ESP_LOGD(TAG, "Alert red effect triggered (RGB removed)");
 }
 
 // TLV helper methods implementation
