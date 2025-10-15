@@ -256,11 +256,6 @@ void PowerSyncComponent::broadcast_tlv_data_()
 {
     ESP_LOGI(TAG, "📡 ESP-NOW ready, sending TLV broadcast packet...");
 
-    // Simulate AC measurements if simulation is enabled
-    if (this->simulate_) {
-        this->simulate_ac_measurements_();
-    }
-
     std::vector<uint8_t> payload = this->build_tlv_packet_();
 
     uint8_t broadcast_addr[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
@@ -587,53 +582,6 @@ void PowerSyncComponent::send_tlv_command()
     } else {
         ESP_LOGE(TAG, "Message queue not initialized");
     }
-}
-
-void PowerSyncComponent::simulate_ac_measurements_()
-{
-    ESP_LOGI(TAG, "🎲 Simulating AC measurements with reasonable random values...");
-    
-    // Get current time for seed variation (use smaller numbers to avoid overflow)
-    uint32_t time_sec = millis() / 1000;  // Convert to seconds for slower variation
-    
-    // Generate reasonable AC voltage (220V ± 10V)
-    float base_voltage = 220.0f;
-    int32_t voltage_offset = (int32_t)(time_sec % 200) - 100;  // -100 to +100
-    float voltage_variation = (float)voltage_offset * 0.1f;    // ±10V variation
-    float simulated_voltage = base_voltage + voltage_variation;
-    this->set_ac_voltage(simulated_voltage);  // Use setter function instead of direct member access
-    
-    // Generate reasonable AC current (-5A to +5A, allowing negative for reverse power flow)
-    float base_current = 0.0f;  // Center around 0A
-    int32_t current_offset = (int32_t)((time_sec + 50) % 100) - 50;  // -50 to +50
-    float current_variation = (float)current_offset * 0.1f;           // ±5A variation
-    float simulated_current = base_current + current_variation;
-    this->set_ac_current(simulated_current);  // Use setter function instead of direct member access
-    
-    // Generate reasonable AC frequency (49.8Hz to 50.2Hz)
-    float base_frequency = 50.0f;
-    int32_t frequency_offset = (int32_t)((time_sec + 25) % 40) - 20;  // -20 to +20
-    float frequency_variation = (float)frequency_offset * 0.01f;      // ±0.2Hz variation
-    float simulated_frequency = base_frequency + frequency_variation;
-    this->set_ac_frequency(simulated_frequency);  // Use setter function instead of direct member access
-    
-    // Calculate power from voltage and current (with some power factor simulation)
-    // Power factor should be positive, but power can be negative if current is negative
-    int32_t pf_offset = (int32_t)((time_sec + 75) % 30) - 15;        // -15 to +15
-    float power_factor = 0.85f + (float)pf_offset * 0.01f;           // 0.7 to 1.0 power factor
-    if (power_factor < 0.7f) power_factor = 0.7f;
-    if (power_factor > 1.0f) power_factor = 1.0f;
-    
-    // Power = Voltage × Current × Power_Factor (can be negative for reverse power flow)
-    float simulated_power = simulated_voltage * simulated_current * power_factor;
-    this->set_ac_power(simulated_power);  // Use setter function instead of direct member access
-    
-    ESP_LOGI(TAG, "🎲 Simulated values:");
-    ESP_LOGI(TAG, "   - AC Voltage: %.1f V", simulated_voltage);
-    ESP_LOGI(TAG, "   - AC Current: %.3f A (%d mA)", simulated_current, this->tlv_ac_current_ma_);
-    ESP_LOGI(TAG, "   - AC Frequency: %.2f Hz", simulated_frequency);
-    ESP_LOGI(TAG, "   - AC Power: %.3f W (%d mW)", simulated_power, this->tlv_ac_power_mw_);
-    ESP_LOGI(TAG, "   - Power Factor: %.2f", power_factor);
 }
 
 // TLV parsing callback implementation

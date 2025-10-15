@@ -28,7 +28,6 @@ CONF_BROADCAST_INTERVAL = "broadcast_interval"
 CONF_SYSTEM_UPDATE_INTERVAL = "system_update_interval"
 CONF_AUTO_ADD_PEER = "auto_add_peer"
 CONF_FIRMWARE_VERSION = "firmware_version"
-CONF_SIMULATE = "simulate"
 
 # TLV sensor configuration
 CONF_AC_VOLTAGE_SENSOR = "ac_voltage_sensor"
@@ -62,7 +61,6 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_AUTO_ADD_PEER, default=True): cv.boolean,
         cv.Optional(CONF_BROADCAST_INTERVAL, default="5s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_SYSTEM_UPDATE_INTERVAL, default="100ms"): cv.positive_time_period_milliseconds,
-        cv.Optional(CONF_SIMULATE, default=False): cv.boolean,
         cv.Required(CONF_FIRMWARE_VERSION): cv.string_strict,
         cv.Required(CONF_RGB_POWER_ENABLE): cv.use_id(output.BinaryOutput),
         cv.Required(CONF_RGB_STRIP): cv.use_id(light.LightState),
@@ -110,7 +108,6 @@ async def to_code(config):
     cg.add(var.set_auto_add_peer(config[CONF_AUTO_ADD_PEER]))
     cg.add(var.set_broadcast_interval(config[CONF_BROADCAST_INTERVAL]))
     cg.add(var.set_system_update_interval(config[CONF_SYSTEM_UPDATE_INTERVAL]))
-    cg.add(var.set_simulate(config[CONF_SIMULATE]))
     cg.add(var.set_firmware_version(config[CONF_FIRMWARE_VERSION]))
     cg.add(var.set_device_role(config[CONF_DEVICE_ROLE]))
 

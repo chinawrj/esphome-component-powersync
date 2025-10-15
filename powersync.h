@@ -134,7 +134,6 @@ class PowerSyncComponent : public Component {
   void set_device_role(DeviceRole role) { device_role_ = role; }
   void set_rgb_power_enable(esphome::output::BinaryOutput *output) { rgb_power_enable_ = output; }
   void set_rgb_strip(esphome::light::LightState *light) { rgb_strip_ = light; }
-  void set_simulate(bool simulate) { simulate_ = simulate; }
 
   // Optional sensor setters
   void set_ac_voltage_sensor(esphome::sensor::Sensor *sensor) { ac_voltage_sensor_ = sensor; }
@@ -171,7 +170,6 @@ class PowerSyncComponent : public Component {
   bool auto_add_peer_ = true;
   uint32_t broadcast_interval_ = 5000;  // 5 seconds
   uint32_t system_update_interval_ = 100;  // 100ms
-  bool simulate_ = false;
 
   // Hardware references
   output::BinaryOutput *rgb_power_enable_ = nullptr;
@@ -242,9 +240,6 @@ class PowerSyncComponent : public Component {
   
   // Decision-making method based on network-wide device states
   void make_power_management_decisions_();
-  
-  // Simulation method
-  void simulate_ac_measurements_();
 
   // TLV helper methods
   void add_tlv_uptime_(std::vector<uint8_t> &payload);
