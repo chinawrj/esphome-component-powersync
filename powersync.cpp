@@ -1042,59 +1042,185 @@ void PowerSyncComponent::update_all_device_data_age_()
 
 void PowerSyncComponent::make_power_management_decisions_()
 {
-    // This function is called periodically to make decisions based on:
+    // This function dispatches to role-specific strategy functions based on:
     // 1. Current device's role (this->device_role_)
     // 2. Network-wide device states (this->device_states_[])
     // 3. Own device state (this->device_states_[this->device_role_])
     
-    // Strategy 1: INVERTER_AC_INPUT - Monitor solar inverter output for reverse power
-    if (this->device_role_ == ROLE_INVERTER_AC_INPUT) {
-        // Check if we have valid solar inverter output data
-        const DeviceState* solar_state = this->get_device_state(ROLE_SOLOAR_INVERTER_OUTPUT_TOTAL);
-        
-        if (solar_state != nullptr) {
-            // Check if data is fresh (within configured timeout)
-            if (solar_state->data_age_ms <= this->power_decision_data_timeout_) {
-                // Solar inverter is active and reporting with fresh data
-                ESP_LOGD(TAG, "🌞 Solar inverter detected - Power: %.2f W (data age: %lu ms)", 
-                         solar_state->power, solar_state->data_age_ms);
-                
-                // Check if power is negative (reverse power flow)
-                if (solar_state->power < 0.0f) {
-                    ESP_LOGW(TAG, "⚠️ Reverse power detected from solar inverter: %.2f W", solar_state->power);
-                    ESP_LOGW(TAG, "🔌 Triggering DLT645 relay disconnect to prevent reverse feed");
-                    
-                    // Trigger relay trip via binary sensor (cross-module control)
-                    if (this->dlt645_relay_trip_sensor_ != nullptr) {
-                        // Publish a state change to trigger the relay trip automation
-                        // The binary sensor state change will trigger the on_press event in YAML
-                        this->dlt645_relay_trip_sensor_->publish_state(true);
-                        
-                        ESP_LOGI(TAG, "✅ DLT645 relay trip command sent via binary sensor");
-                        
-                        // Reset the binary sensor state after a short delay to allow re-triggering
-                        // This is handled by the ESPHome automation framework
-                    } else {
-                        ESP_LOGE(TAG, "❌ DLT645 relay trip sensor not configured!");
-                    }
-                } else if (solar_state->power >= 0.0f) {
-                    ESP_LOGD(TAG, "✅ Solar power is positive (forward flow): %.2f W - No action needed", solar_state->power);
-                }
-            } else {
-                ESP_LOGW(TAG, "⚠️ Solar inverter data is stale (age: %lu ms, timeout: %lu ms) - Skipping power decision",
-                         solar_state->data_age_ms, this->power_decision_data_timeout_);
-            }
-        } else {
-            ESP_LOGV(TAG, "ℹ️ Solar inverter data not available or expired");
-        }
+    // Dispatch to role-specific strategy function
+    switch (this->device_role_) {
+        case ROLE_GRID_INPUT:
+            this->strategy_grid_input_();
+            break;
+            
+        case ROLE_INVERTER_AC_INPUT:
+            this->strategy_inverter_ac_input_();
+            break;
+            
+        case ROLE_INVERTER_AC_OUTPUT:
+            this->strategy_inverter_ac_output_();
+            break;
+            
+        case ROLE_INVERTER_DC_BATTERY:
+            this->strategy_inverter_dc_battery_();
+            break;
+            
+        case ROLE_INVERTER_DC_GRID_POWER:
+            this->strategy_inverter_dc_grid_power_();
+            break;
+            
+        case ROLE_SINKER_AC_HEATER:
+            this->strategy_sinker_ac_heater_();
+            break;
+            
+        case ROLE_SINKER_DC_HEATER:
+            this->strategy_sinker_dc_heater_();
+            break;
+            
+        case ROLE_SINKER_AC_VEHICLE_CHARGER:
+            this->strategy_sinker_ac_vehicle_charger_();
+            break;
+            
+        case ROLE_SINKER_DC_VEHICLE_CHARGER:
+            this->strategy_sinker_dc_vehicle_charger_();
+            break;
+            
+        case ROLE_SOLOAR_INVERTER_OUTPUT_TOTAL:
+            this->strategy_solar_inverter_output_total_();
+            break;
+            
+        case ROLE_UNKNOWN:
+        default:
+            ESP_LOGV(TAG, "No strategy defined for role: %s", 
+                     tlv_device_role_to_string(this->device_role_));
+            break;
     }
-    
-    // Additional strategies can be added here for other device roles
-    // Example: SINKER role monitoring grid input and inverter output
-    // Example: INVERTER role monitoring battery state and grid input
     
     ESP_LOGV(TAG, "Power management decision cycle completed for role: %s", 
              tlv_device_role_to_string(this->device_role_));
+}
+
+// ============================================================================
+// Role-Specific Strategy Functions
+// ============================================================================
+
+void PowerSyncComponent::strategy_inverter_ac_input_()
+{
+    // Strategy: Monitor solar inverter output for reverse power
+    // If reverse power detected, trigger relay disconnect to prevent reverse feed
+    
+    ESP_LOGV(TAG, "🔌 Executing INVERTER_AC_INPUT strategy");
+    
+    // Check if we have valid solar inverter output data
+    const DeviceState* solar_state = this->get_device_state(ROLE_SOLOAR_INVERTER_OUTPUT_TOTAL);
+    
+    if (solar_state != nullptr) {
+        // Check if data is fresh (within configured timeout)
+        if (solar_state->data_age_ms <= this->power_decision_data_timeout_) {
+            // Solar inverter is active and reporting with fresh data
+            ESP_LOGD(TAG, "🌞 Solar inverter detected - Power: %.2f W (data age: %lu ms)", 
+                     solar_state->power, solar_state->data_age_ms);
+            
+            // Check if power is negative (reverse power flow)
+            if (solar_state->power < 0.0f) {
+                ESP_LOGW(TAG, "⚠️ Reverse power detected from solar inverter: %.2f W", solar_state->power);
+                ESP_LOGW(TAG, "🔌 Triggering DLT645 relay disconnect to prevent reverse feed");
+                
+                // Trigger relay trip via binary sensor (cross-module control)
+                if (this->dlt645_relay_trip_sensor_ != nullptr) {
+                    // Publish a state change to trigger the relay trip automation
+                    // The binary sensor state change will trigger the on_press event in YAML
+                    this->dlt645_relay_trip_sensor_->publish_state(true);
+                    
+                    ESP_LOGI(TAG, "✅ DLT645 relay trip command sent via binary sensor");
+                    
+                    // Reset the binary sensor state after a short delay to allow re-triggering
+                    // This is handled by the ESPHome automation framework
+                } else {
+                    ESP_LOGE(TAG, "❌ DLT645 relay trip sensor not configured!");
+                }
+            } else if (solar_state->power >= 0.0f) {
+                ESP_LOGD(TAG, "✅ Solar power is positive (forward flow): %.2f W - No action needed", solar_state->power);
+            }
+        } else {
+            ESP_LOGW(TAG, "⚠️ Solar inverter data is stale (age: %lu ms, timeout: %lu ms) - Skipping power decision",
+                     solar_state->data_age_ms, this->power_decision_data_timeout_);
+        }
+    } else {
+        ESP_LOGV(TAG, "ℹ️ Solar inverter data not available or expired");
+    }
+}
+
+void PowerSyncComponent::strategy_grid_input_()
+{
+    // Strategy: Monitor grid input for power quality and availability
+    // TODO: Implement grid input monitoring strategy
+    
+    ESP_LOGV(TAG, "⚡ Executing GRID_INPUT strategy (not yet implemented)");
+}
+
+void PowerSyncComponent::strategy_inverter_ac_output_()
+{
+    // Strategy: Monitor inverter AC output and coordinate with other devices
+    // TODO: Implement inverter AC output strategy
+    
+    ESP_LOGV(TAG, "🔌 Executing INVERTER_AC_OUTPUT strategy (not yet implemented)");
+}
+
+void PowerSyncComponent::strategy_inverter_dc_battery_()
+{
+    // Strategy: Monitor battery state and manage charging/discharging
+    // TODO: Implement battery management strategy
+    
+    ESP_LOGV(TAG, "🔋 Executing INVERTER_DC_BATTERY strategy (not yet implemented)");
+}
+
+void PowerSyncComponent::strategy_inverter_dc_grid_power_()
+{
+    // Strategy: Monitor DC grid power and coordinate with battery
+    // TODO: Implement DC grid power management strategy
+    
+    ESP_LOGV(TAG, "⚡ Executing INVERTER_DC_GRID_POWER strategy (not yet implemented)");
+}
+
+void PowerSyncComponent::strategy_sinker_ac_heater_()
+{
+    // Strategy: Consume excess AC power through heater load
+    // TODO: Implement AC heater power consumption strategy
+    
+    ESP_LOGV(TAG, "🔥 Executing SINKER_AC_HEATER strategy (not yet implemented)");
+}
+
+void PowerSyncComponent::strategy_sinker_dc_heater_()
+{
+    // Strategy: Consume excess DC power through heater load
+    // TODO: Implement DC heater power consumption strategy
+    
+    ESP_LOGV(TAG, "🔥 Executing SINKER_DC_HEATER strategy (not yet implemented)");
+}
+
+void PowerSyncComponent::strategy_sinker_ac_vehicle_charger_()
+{
+    // Strategy: Consume excess AC power through vehicle charging
+    // TODO: Implement AC vehicle charger power consumption strategy
+    
+    ESP_LOGV(TAG, "🚗 Executing SINKER_AC_VEHICLE_CHARGER strategy (not yet implemented)");
+}
+
+void PowerSyncComponent::strategy_sinker_dc_vehicle_charger_()
+{
+    // Strategy: Consume excess DC power through vehicle charging
+    // TODO: Implement DC vehicle charger power consumption strategy
+    
+    ESP_LOGV(TAG, "🚗 Executing SINKER_DC_VEHICLE_CHARGER strategy (not yet implemented)");
+}
+
+void PowerSyncComponent::strategy_solar_inverter_output_total_()
+{
+    // Strategy: Monitor solar inverter output and report production data
+    // This role is typically a data source, not a decision maker
+    
+    ESP_LOGV(TAG, "🌞 Executing SOLOAR_INVERTER_OUTPUT_TOTAL strategy (data source role)");
 }
 
 void PowerSyncComponent::dump_device_states_table_()

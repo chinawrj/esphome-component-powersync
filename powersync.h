@@ -234,8 +234,20 @@ class PowerSyncComponent : public Component {
   void dump_device_states_table_();  // Dump device states in table format
   void update_all_device_data_age_();  // Update data age for all valid devices
   
-  // Decision-making method based on network-wide device states
+  // Master decision-making method based on network-wide device states
   void make_power_management_decisions_();
+  
+  // Role-specific strategy functions
+  void strategy_inverter_ac_input_();              // ROLE_INVERTER_AC_INPUT strategy
+  void strategy_grid_input_();                     // ROLE_GRID_INPUT strategy
+  void strategy_inverter_ac_output_();             // ROLE_INVERTER_AC_OUTPUT strategy
+  void strategy_inverter_dc_battery_();            // ROLE_INVERTER_DC_BATTERY strategy
+  void strategy_inverter_dc_grid_power_();         // ROLE_INVERTER_DC_GRID_POWER strategy
+  void strategy_sinker_ac_heater_();               // ROLE_SINKER_AC_HEATER strategy
+  void strategy_sinker_dc_heater_();               // ROLE_SINKER_DC_HEATER strategy
+  void strategy_sinker_ac_vehicle_charger_();      // ROLE_SINKER_AC_VEHICLE_CHARGER strategy
+  void strategy_sinker_dc_vehicle_charger_();      // ROLE_SINKER_DC_VEHICLE_CHARGER strategy
+  void strategy_solar_inverter_output_total_();    // ROLE_SOLOAR_INVERTER_OUTPUT_TOTAL strategy
 
   // TLV helper methods
   void add_tlv_uptime_(std::vector<uint8_t> &payload);
