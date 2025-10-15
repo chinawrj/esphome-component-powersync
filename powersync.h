@@ -79,6 +79,7 @@ struct DeviceState {
   
   // Timing
   uint32_t last_update_time;  // Timestamp of last update (millis())
+  uint32_t data_age_ms;       // Age of data in milliseconds (updated periodically)
   
   // Status
   bool is_valid;           // Whether this device data is valid/active
@@ -89,7 +90,7 @@ struct DeviceState {
   DeviceState() 
     : voltage(0.0f), current(0.0f), power(0.0f),
       rssi(0), uptime(0), firmware_version(""),
-      last_update_time(0), is_valid(false), role(ROLE_UNKNOWN) {
+      last_update_time(0), data_age_ms(0), is_valid(false), role(ROLE_UNKNOWN) {
     memset(src_addr, 0, 6);
   }
 };
@@ -128,6 +129,7 @@ class PowerSyncComponent : public Component {
   void set_auto_add_peer(bool auto_add_peer) { auto_add_peer_ = auto_add_peer; }
   void set_broadcast_interval(uint32_t interval) { broadcast_interval_ = interval; }
   void set_system_update_interval(uint32_t interval) { system_update_interval_ = interval; }
+  void set_power_decision_data_timeout(uint32_t timeout) { power_decision_data_timeout_ = timeout; }
   void set_firmware_version(const std::string &version) { firmware_version_ = version; }
   void set_device_role(DeviceRole role) { device_role_ = role; }
 
@@ -166,6 +168,7 @@ class PowerSyncComponent : public Component {
   bool auto_add_peer_ = true;
   uint32_t broadcast_interval_ = 5000;  // 5 seconds
   uint32_t system_update_interval_ = 100;  // 100ms
+  uint32_t power_decision_data_timeout_ = 60000;  // 60 seconds (default)
 
   // Optional sensors
   sensor::Sensor *ac_voltage_sensor_ = nullptr;
@@ -229,6 +232,7 @@ class PowerSyncComponent : public Component {
   // Device state management methods
   void update_device_state_(DeviceRole role, const uint8_t *src_addr, int rssi);
   void dump_device_states_table_();  // Dump device states in table format
+  void update_all_device_data_age_();  // Update data age for all valid devices
   
   // Decision-making method based on network-wide device states
   void make_power_management_decisions_();

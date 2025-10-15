@@ -83,6 +83,7 @@ void PowerSyncComponent::setup()
     ESP_LOGCONFIG(TAG, "  Auto add peer: %s", this->auto_add_peer_ ? "YES" : "NO");
     ESP_LOGCONFIG(TAG, "  Broadcast interval: %lu ms", this->broadcast_interval_);
     ESP_LOGCONFIG(TAG, "  System update interval: %lu ms", this->system_update_interval_);
+    ESP_LOGCONFIG(TAG, "  Power decision data timeout: %lu ms", this->power_decision_data_timeout_);
     ESP_LOGCONFIG(TAG, "  ESP-NOW task created with priority: %d", ESPNOW_TASK_PRIORITY);
 }
 
@@ -828,6 +829,20 @@ void PowerSyncComponent::espnow_task_function_(void *pvParameters)
                             
                             // Update device state if we have valid role and at least one measurement
                             if (ctx.has_role && (ctx.has_voltage || ctx.has_current || ctx.has_power)) {
+                                // Check if received role matches current device's role (loopback detection)
+                                if (ctx.device_state.role == component->device_role_) {
+                                    ESP_LOGE(TAG, "❌ Received packet with same role as current device (%s) - Possible loopback! Rejecting update.",
+                                             tlv_device_role_to_string(ctx.device_state.role));
+                                    ESP_LOGE(TAG, "   Source MAC: %02X:%02X:%02X:%02X:%02X:%02X",
+                                             msg.src_addr[0], msg.src_addr[1], msg.src_addr[2], 
+                                             msg.src_addr[3], msg.src_addr[4], msg.src_addr[5]);
+                                    ESP_LOGE(TAG, "   Self MAC:   %02X:%02X:%02X:%02X:%02X:%02X",
+                                             component->mac_address_bytes_[0], component->mac_address_bytes_[1], 
+                                             component->mac_address_bytes_[2], component->mac_address_bytes_[3],
+                                             component->mac_address_bytes_[4], component->mac_address_bytes_[5]);
+                                    break;  // Skip update for same role
+                                }
+                                
                                 // Get reference to device state for this role
                                 DeviceState& dev_state = component->device_states_[ctx.device_state.role];
                                 
@@ -894,6 +909,9 @@ void PowerSyncComponent::espnow_task_function_(void *pvParameters)
                     break;
             }
         }
+        
+        // Update data age for all valid devices before making power decisions
+        component->update_all_device_data_age_();
         
         // Make power management decisions every loop iteration (every 10ms due to queue timeout)
         component->make_power_management_decisions_();
@@ -1002,6 +1020,26 @@ void PowerSyncComponent::update_device_state_(DeviceRole role, const uint8_t *sr
     }
 }
 
+void PowerSyncComponent::update_all_device_data_age_()
+{
+    // Update data age for all valid device states
+    uint32_t now = millis();
+    int updated_count = 0;
+    
+    for (size_t i = 0; i < MAX_DEVICE_ROLES; i++) {
+        DeviceState& state = this->device_states_[i];
+        
+        // Only update age for valid devices
+        if (state.is_valid) {
+            // Calculate data age in milliseconds
+            state.data_age_ms = now - state.last_update_time;
+            updated_count++;
+        }
+    }
+    
+    ESP_LOGV(TAG, "Updated data age for %d valid device(s)", updated_count);
+}
+
 void PowerSyncComponent::make_power_management_decisions_()
 {
     // This function is called periodically to make decisions based on:
@@ -1015,29 +1053,36 @@ void PowerSyncComponent::make_power_management_decisions_()
         const DeviceState* solar_state = this->get_device_state(ROLE_SOLOAR_INVERTER_OUTPUT_TOTAL);
         
         if (solar_state != nullptr) {
-            // Solar inverter is active and reporting
-            ESP_LOGD(TAG, "🌞 Solar inverter detected - Power: %.2f W", solar_state->power);
-            
-            // Check if power is negative (reverse power flow)
-            if (solar_state->power < 0.0f) {
-                ESP_LOGW(TAG, "⚠️ Reverse power detected from solar inverter: %.2f W", solar_state->power);
-                ESP_LOGW(TAG, "🔌 Triggering DLT645 relay disconnect to prevent reverse feed");
+            // Check if data is fresh (within configured timeout)
+            if (solar_state->data_age_ms <= this->power_decision_data_timeout_) {
+                // Solar inverter is active and reporting with fresh data
+                ESP_LOGD(TAG, "🌞 Solar inverter detected - Power: %.2f W (data age: %lu ms)", 
+                         solar_state->power, solar_state->data_age_ms);
                 
-                // Trigger relay trip via binary sensor (cross-module control)
-                if (this->dlt645_relay_trip_sensor_ != nullptr) {
-                    // Publish a state change to trigger the relay trip automation
-                    // The binary sensor state change will trigger the on_press event in YAML
-                    this->dlt645_relay_trip_sensor_->publish_state(true);
+                // Check if power is negative (reverse power flow)
+                if (solar_state->power < 0.0f) {
+                    ESP_LOGW(TAG, "⚠️ Reverse power detected from solar inverter: %.2f W", solar_state->power);
+                    ESP_LOGW(TAG, "🔌 Triggering DLT645 relay disconnect to prevent reverse feed");
                     
-                    ESP_LOGI(TAG, "✅ DLT645 relay trip command sent via binary sensor");
-                    
-                    // Reset the binary sensor state after a short delay to allow re-triggering
-                    // This is handled by the ESPHome automation framework
-                } else {
-                    ESP_LOGE(TAG, "❌ DLT645 relay trip sensor not configured!");
+                    // Trigger relay trip via binary sensor (cross-module control)
+                    if (this->dlt645_relay_trip_sensor_ != nullptr) {
+                        // Publish a state change to trigger the relay trip automation
+                        // The binary sensor state change will trigger the on_press event in YAML
+                        this->dlt645_relay_trip_sensor_->publish_state(true);
+                        
+                        ESP_LOGI(TAG, "✅ DLT645 relay trip command sent via binary sensor");
+                        
+                        // Reset the binary sensor state after a short delay to allow re-triggering
+                        // This is handled by the ESPHome automation framework
+                    } else {
+                        ESP_LOGE(TAG, "❌ DLT645 relay trip sensor not configured!");
+                    }
+                } else if (solar_state->power >= 0.0f) {
+                    ESP_LOGD(TAG, "✅ Solar power is positive (forward flow): %.2f W - No action needed", solar_state->power);
                 }
-            } else if (solar_state->power >= 0.0f) {
-                ESP_LOGD(TAG, "✅ Solar power is positive (forward flow): %.2f W - No action needed", solar_state->power);
+            } else {
+                ESP_LOGW(TAG, "⚠️ Solar inverter data is stale (age: %lu ms, timeout: %lu ms) - Skipping power decision",
+                         solar_state->data_age_ms, this->power_decision_data_timeout_);
             }
         } else {
             ESP_LOGV(TAG, "ℹ️ Solar inverter data not available or expired");
@@ -1061,7 +1106,7 @@ void PowerSyncComponent::dump_device_states_table_()
         Center
     };
 
-    static constexpr size_t COLUMN_COUNT = 9;
+    static constexpr size_t COLUMN_COUNT = 10;
     static const std::array<const char *, COLUMN_COUNT> COLUMN_HEADERS = {
         "Role ID",
         "Device Name",
@@ -1070,6 +1115,7 @@ void PowerSyncComponent::dump_device_states_table_()
         "Current",
         "Power",
         "RSSI",
+        "Data Age",
         "Uptime",
         "Firmware"
     };
@@ -1081,6 +1127,7 @@ void PowerSyncComponent::dump_device_states_table_()
         "(A)",
         "(W)",
         "(dBm)",
+        "(ms)",
         "(hrs)",
         ""
     };
@@ -1092,13 +1139,15 @@ void PowerSyncComponent::dump_device_states_table_()
         7,   // Current
         8,   // Power
         5,   // RSSI
+        9,   // Data Age
         9,   // Uptime
-        20   // Firmware
+        18   // Firmware (slightly reduced to fit new column)
     };
     static const std::array<ColumnAlign, COLUMN_COUNT> DATA_ALIGNMENTS = {
         ColumnAlign::Left,
         ColumnAlign::Left,
         ColumnAlign::Center,
+        ColumnAlign::Right,
         ColumnAlign::Right,
         ColumnAlign::Right,
         ColumnAlign::Right,
@@ -1253,27 +1302,31 @@ void PowerSyncComponent::dump_device_states_table_()
             snprintf(buffer, sizeof(buffer), "%d", state.rssi);
             row_cells[6] = buffer;
             
-            const float uptime_hours = state.uptime / 3600.0f;
-            snprintf(buffer, sizeof(buffer), "%.2f", uptime_hours);
+            // Data age in milliseconds
+            snprintf(buffer, sizeof(buffer), "%lu", state.data_age_ms);
             row_cells[7] = buffer;
             
+            const float uptime_hours = state.uptime / 3600.0f;
+            snprintf(buffer, sizeof(buffer), "%.2f", uptime_hours);
+            row_cells[8] = buffer;
+            
             if (!state.firmware_version.empty()) {
-                row_cells[8] = state.firmware_version;
+                row_cells[9] = state.firmware_version;
             } else {
-                row_cells[8] = "N/A";
+                row_cells[9] = "N/A";
             }
         } else if (state.is_valid) {
-            for (size_t idx = 3; idx <= 7; ++idx) {
+            for (size_t idx = 3; idx <= 8; ++idx) {
                 row_cells[idx] = "---";
             }
             
             const uint32_t time_since_update = (now - state.last_update_time) / 1000;  // seconds
-            row_cells[8] = "timeout: " + std::to_string(static_cast<unsigned long>(time_since_update)) + "s ago";
+            row_cells[9] = "timeout: " + std::to_string(static_cast<unsigned long>(time_since_update)) + "s ago";
         } else {
-            for (size_t idx = 3; idx <= 7; ++idx) {
+            for (size_t idx = 3; idx <= 8; ++idx) {
                 row_cells[idx] = "---";
             }
-            row_cells[8] = "not configured";
+            row_cells[9] = "not configured";
         }
         
         const std::string data_line = format_row(row_cells, DATA_ALIGNMENTS);
