@@ -504,6 +504,9 @@ void PowerSyncComponent::set_ac_voltage(float voltage)
         my_state.is_valid = true;
         my_state.role = this->device_role_;
     }
+    
+    // Notify ESP-NOW task of data change
+    this->send_data_changed_notification_();
 }
 
 void PowerSyncComponent::set_ac_current(float current)
@@ -519,6 +522,9 @@ void PowerSyncComponent::set_ac_current(float current)
         my_state.is_valid = true;
         my_state.role = this->device_role_;
     }
+    
+    // Notify ESP-NOW task of data change
+    this->send_data_changed_notification_();
 }
 
 void PowerSyncComponent::set_ac_frequency(float frequency)
@@ -542,6 +548,9 @@ void PowerSyncComponent::set_ac_power(float power)
         my_state.is_valid = true;
         my_state.role = this->device_role_;
     }
+    
+    // Notify ESP-NOW task of data change (power is critical for immediate broadcast)
+    this->send_data_changed_notification_();
 }
 
 void PowerSyncComponent::trigger_broadcast()
@@ -569,6 +578,25 @@ void PowerSyncComponent::send_tlv_command()
         }
     } else {
         ESP_LOGE(TAG, "Message queue not initialized");
+    }
+}
+
+void PowerSyncComponent::send_data_changed_notification_()
+{
+    if (this->message_queue_ != nullptr) {
+        PowerSyncMessage msg;
+        msg.type = CMD_DATA_CHANGED;
+        msg.body_length = 0;  // No body needed for command messages
+        msg.rssi = 0;         // Not applicable for command messages
+        memset(msg.src_addr, 0, 6);  // Not applicable for command messages
+        
+        // Send with minimal timeout (non-blocking)
+        BaseType_t result = xQueueSend(this->message_queue_, &msg, 0);
+        if (result != pdPASS) {
+            ESP_LOGV(TAG, "Failed to send CMD_DATA_CHANGED to message queue (queue full)");
+        } else {
+            ESP_LOGV(TAG, "CMD_DATA_CHANGED sent to message queue successfully");
+        }
     }
 }
 
@@ -797,6 +825,38 @@ void PowerSyncComponent::espnow_task_function_(void *pvParameters)
                     component->broadcast_tlv_data_();
                     break;
                     
+                case CMD_DATA_CHANGED: {
+                    ESP_LOGV(TAG, "Processing CMD_DATA_CHANGED message from queue");
+                    
+                    // Get current power value in watts
+                    float current_power_w = component->tlv_ac_power_mw_ / 1000.0f;
+                    
+                    // Calculate absolute power change
+                    float power_change_w = std::abs(current_power_w - component->last_broadcast_power_w_);
+                    
+                    ESP_LOGV(TAG, "Power change check: current=%.3f W, last_broadcast=%.3f W, change=%.3f W, threshold=%.1f W",
+                             current_power_w, component->last_broadcast_power_w_, 
+                             power_change_w, component->power_change_threshold_w_);
+                    
+                    // If power change exceeds threshold, trigger immediate broadcast
+                    if (power_change_w >= component->power_change_threshold_w_) {
+                        ESP_LOGI(TAG, "⚡ Power change (%.1f W) exceeds threshold (%.1f W) - Triggering immediate broadcast",
+                                 power_change_w, component->power_change_threshold_w_);
+                        
+                        component->broadcast_tlv_data_();
+                        
+                        // Update last broadcast power value
+                        component->last_broadcast_power_w_ = current_power_w;
+                        
+                        // Reset last_broadcast_time to prevent double broadcast
+                        last_broadcast_time = now;
+                    } else {
+                        ESP_LOGV(TAG, "Power change (%.1f W) within threshold (%.1f W) - No immediate broadcast needed",
+                                 power_change_w, component->power_change_threshold_w_);
+                    }
+                    break;
+                }
+                    
                 case DATA_TLV_RECEIVED:
                     ESP_LOGI(TAG, "Processing DATA_TLV_RECEIVED message from queue");
                     ESP_LOGI(TAG, "- Source MAC: %02X:%02X:%02X:%02X:%02X:%02X",
@@ -926,6 +986,9 @@ void PowerSyncComponent::espnow_task_function_(void *pvParameters)
         if (component->espnow_ready_ && now - last_broadcast_time >= component->broadcast_interval_) {
             component->broadcast_tlv_data_();
             last_broadcast_time = now;
+            
+            // Update last broadcast power value for change detection
+            component->last_broadcast_power_w_ = component->tlv_ac_power_mw_ / 1000.0f;
         }
         
         // Dump device states table every 5 seconds

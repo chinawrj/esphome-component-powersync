@@ -27,6 +27,7 @@ CONF_SYSTEM_UPDATE_INTERVAL = "system_update_interval"
 CONF_AUTO_ADD_PEER = "auto_add_peer"
 CONF_FIRMWARE_VERSION = "firmware_version"
 CONF_POWER_DECISION_DATA_TIMEOUT = "power_decision_data_timeout"
+CONF_POWER_CHANGE_THRESHOLD = "power_change_threshold"
 
 # TLV sensor configuration
 CONF_AC_VOLTAGE_SENSOR = "ac_voltage_sensor"
@@ -61,6 +62,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_BROADCAST_INTERVAL, default="5s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_SYSTEM_UPDATE_INTERVAL, default="100ms"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_POWER_DECISION_DATA_TIMEOUT, default="60s"): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_POWER_CHANGE_THRESHOLD, default=100.0): cv.float_range(min=0.0),
         cv.Required(CONF_FIRMWARE_VERSION): cv.string_strict,
         cv.Optional(CONF_AC_VOLTAGE_SENSOR): sensor.sensor_schema(
             device_class=DEVICE_CLASS_VOLTAGE,
@@ -107,6 +109,7 @@ async def to_code(config):
     cg.add(var.set_broadcast_interval(config[CONF_BROADCAST_INTERVAL]))
     cg.add(var.set_system_update_interval(config[CONF_SYSTEM_UPDATE_INTERVAL]))
     cg.add(var.set_power_decision_data_timeout(config[CONF_POWER_DECISION_DATA_TIMEOUT]))
+    cg.add(var.set_power_change_threshold(config[CONF_POWER_CHANGE_THRESHOLD]))
     cg.add(var.set_firmware_version(config[CONF_FIRMWARE_VERSION]))
     cg.add(var.set_device_role(config[CONF_DEVICE_ROLE]))
 

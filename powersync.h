@@ -56,7 +56,8 @@ enum StatusFlags : uint16_t {
 // Message queue types
 enum MessageType : uint8_t {
   CMD_SEND_TLV = 0x01,
-  DATA_TLV_RECEIVED = 0x02
+  DATA_TLV_RECEIVED = 0x02,
+  CMD_DATA_CHANGED = 0x03  // Local data changed, check if broadcast needed
 };
 
 // Maximum message body size (adjust as needed)
@@ -130,6 +131,7 @@ class PowerSyncComponent : public Component {
   void set_broadcast_interval(uint32_t interval) { broadcast_interval_ = interval; }
   void set_system_update_interval(uint32_t interval) { system_update_interval_ = interval; }
   void set_power_decision_data_timeout(uint32_t timeout) { power_decision_data_timeout_ = timeout; }
+  void set_power_change_threshold(float threshold) { power_change_threshold_w_ = threshold; }
   void set_firmware_version(const std::string &version) { firmware_version_ = version; }
   void set_device_role(DeviceRole role) { device_role_ = role; }
 
@@ -169,6 +171,7 @@ class PowerSyncComponent : public Component {
   uint32_t broadcast_interval_ = 5000;  // 5 seconds
   uint32_t system_update_interval_ = 100;  // 100ms
   uint32_t power_decision_data_timeout_ = 60000;  // 60 seconds (default)
+  float power_change_threshold_w_ = 100.0f;  // 100W power change threshold (default)
 
   // Optional sensors
   sensor::Sensor *ac_voltage_sensor_ = nullptr;
@@ -187,6 +190,9 @@ class PowerSyncComponent : public Component {
   int32_t tlv_ac_current_ma_ = 0;
   float tlv_ac_frequency_ = 0.0f;
   int32_t tlv_ac_power_mw_ = 0;
+  
+  // Power change tracking for immediate broadcast trigger
+  float last_broadcast_power_w_ = 0.0f;  // Last broadcast power value in watts
 
   // System info (similar to esp32_system_info.yaml)
   std::string device_id_;
@@ -228,6 +234,7 @@ class PowerSyncComponent : public Component {
   void handle_unknown_peer_(const uint8_t *src_addr, const uint8_t *data, int len, int rssi);
   void trigger_packet_received_effect_();
   void trigger_alert_red_effect_();
+  void send_data_changed_notification_();  // Send CMD_DATA_CHANGED to ESP-NOW task
   
   // Device state management methods
   void update_device_state_(DeviceRole role, const uint8_t *src_addr, int rssi);
