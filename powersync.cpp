@@ -1169,12 +1169,47 @@ void PowerSyncComponent::make_power_management_decisions_()
 
 void PowerSyncComponent::strategy_inverter_ac_input_()
 {
-    // Strategy: Monitor solar inverter output for reverse power
-    // If reverse power detected, trigger relay disconnect to prevent reverse feed
+    // Strategy: Monitor own power for reverse feed (grid feed)
+    // Priority 1: Check own power first - if negative (reverse feed), immediately disconnect relay
+    // Priority 2: If own power is positive or zero, then monitor solar inverter for coordination
     
     ESP_LOGV(TAG, "🔌 Executing INVERTER_AC_INPUT strategy");
     
-    // Check if we have valid solar inverter output data
+    // Priority 1: Check own device power for reverse feed (grid feed)
+    // Get own device state from device_states_ array
+    const DeviceState* own_state = this->get_device_state(this->device_role_);
+    
+    if (own_state != nullptr) {
+        // Check if own power is negative (reverse power flow / grid feed)
+        float own_power_w = own_state->power;
+        
+        if (own_power_w < 0.0f) {
+            ESP_LOGW(TAG, "⚠️ CRITICAL: Own power is NEGATIVE (grid feed detected): %.2f W", own_power_w);
+            ESP_LOGW(TAG, "🔌 Triggering immediate DLT645 relay disconnect to prevent reverse feed");
+            
+            // Trigger relay trip via binary sensor (cross-module control)
+            if (this->dlt645_relay_trip_sensor_ != nullptr) {
+                // Publish a state change to trigger the relay trip automation
+                this->dlt645_relay_trip_sensor_->publish_state(true);
+                
+                ESP_LOGI(TAG, "✅ DLT645 relay trip command sent via binary sensor (grid feed protection)");
+                
+                // Reset the binary sensor state after a short delay to allow re-triggering
+                // This is handled by the ESPHome automation framework
+            } else {
+                ESP_LOGE(TAG, "❌ DLT645 relay trip sensor not configured!");
+            }
+            
+            // Return immediately - no need to check solar inverter data
+            return;
+        } else {
+            ESP_LOGD(TAG, "✅ Own power is positive or zero (normal operation): %.2f W", own_power_w);
+        }
+    } else {
+        ESP_LOGW(TAG, "⚠️ Own device state not available - cannot check for grid feed");
+    }
+    
+    // Priority 2: Check solar inverter output for reverse power (only if own power is not negative)
     const DeviceState* solar_state = this->get_device_state(ROLE_SOLOAR_INVERTER_OUTPUT_TOTAL);
     
     if (solar_state != nullptr) {
@@ -1184,26 +1219,25 @@ void PowerSyncComponent::strategy_inverter_ac_input_()
             ESP_LOGD(TAG, "🌞 Solar inverter detected - Power: %.2f W (data age: %lu ms)", 
                      solar_state->power, solar_state->data_age_ms);
             
-            // Check if power is negative (reverse power flow)
+            // Check if solar power is negative (reverse power flow from solar)
             if (solar_state->power < 0.0f) {
-                ESP_LOGW(TAG, "⚠️ Reverse power detected from solar inverter: %.2f W", solar_state->power);
-                ESP_LOGW(TAG, "🔌 Triggering DLT645 relay disconnect to prevent reverse feed");
+                ESP_LOGW(TAG, "⚠️ CRITICAL: Solar inverter reporting NEGATIVE power (reverse feed): %.2f W", solar_state->power);
+                ESP_LOGW(TAG, "🔌 Triggering DLT645 relay disconnect to prevent solar reverse feed");
                 
                 // Trigger relay trip via binary sensor (cross-module control)
                 if (this->dlt645_relay_trip_sensor_ != nullptr) {
                     // Publish a state change to trigger the relay trip automation
-                    // The binary sensor state change will trigger the on_press event in YAML
                     this->dlt645_relay_trip_sensor_->publish_state(true);
                     
-                    ESP_LOGI(TAG, "✅ DLT645 relay trip command sent via binary sensor");
+                    ESP_LOGI(TAG, "✅ DLT645 relay trip command sent via binary sensor (solar reverse feed protection)");
                     
                     // Reset the binary sensor state after a short delay to allow re-triggering
                     // This is handled by the ESPHome automation framework
                 } else {
                     ESP_LOGE(TAG, "❌ DLT645 relay trip sensor not configured!");
                 }
-            } else if (solar_state->power >= 0.0f) {
-                ESP_LOGD(TAG, "✅ Solar power is positive (forward flow): %.2f W - No action needed", solar_state->power);
+            } else {
+                ESP_LOGD(TAG, "✅ Solar power is positive (normal production): %.2f W", solar_state->power);
             }
         } else {
             ESP_LOGW(TAG, "⚠️ Solar inverter data is stale (age: %lu ms, timeout: %lu ms) - Skipping power decision",
