@@ -66,7 +66,7 @@ void PowerSyncComponent::setup()
     // Create and start the ESP-NOW dedicated task
     BaseType_t result = xTaskCreate(
         espnow_task_function_,                    // Task function
-        "PowerSyncESPNOW",                        // Task name
+        "PSYNC",                                  // Task name
         ESPNOW_TASK_STACK_SIZE,                   // Stack size
         this,                                     // Parameters passed to task
         ESPNOW_TASK_PRIORITY,                     // Priority
@@ -229,7 +229,7 @@ std::vector<uint8_t> PowerSyncComponent::build_tlv_packet_()
 {
     std::vector<uint8_t> payload;
 
-    ESP_LOGI(TAG, "Building composite TLV data packet containing all TLV types");
+    ESP_LOGD(TAG, "Building composite TLV data packet containing all TLV types");
 
     // Add all TLV types (matching the YAML configuration order)
     this->add_tlv_uptime_(payload);
@@ -245,9 +245,9 @@ std::vector<uint8_t> PowerSyncComponent::build_tlv_packet_()
     this->add_tlv_free_memory_(payload);
     this->add_tlv_status_flags_(payload);
 
-    ESP_LOGI(TAG, "Composite TLV data packet construction completed:");
-    ESP_LOGI(TAG, "- Total packet length: %d bytes", payload.size());
-    ESP_LOGI(TAG, "- Number of TLV types included: %d", 12);
+    ESP_LOGD(TAG, "Composite TLV data packet construction completed:");
+    ESP_LOGD(TAG, "- Total packet length: %d bytes", payload.size());
+    ESP_LOGD(TAG, "- Number of TLV types included: %d", 12);
 
     return payload;
 }
@@ -341,64 +341,65 @@ void PowerSyncComponent::trigger_alert_red_effect_()
 // TLV helper methods implementation
 void PowerSyncComponent::add_tlv_uptime_(std::vector<uint8_t> &payload)
 {
-    ESP_LOGI(TAG, "Adding UPTIME TLV");
+    ESP_LOGD(TAG, "Adding UPTIME TLV");
     this->add_tlv_uint32_(payload, TLV_TYPE_UPTIME, this->uptime_seconds_);
-    ESP_LOGI(TAG, "- Uptime: %lu seconds", this->uptime_seconds_);
+    ESP_LOGD(TAG, "- Uptime: %lu seconds", this->uptime_seconds_);
 }
 
 void PowerSyncComponent::add_tlv_device_id_(std::vector<uint8_t> &payload)
 {
-    ESP_LOGI(TAG, "Adding DEVICE_ID TLV");
+    ESP_LOGD(TAG, "Adding DEVICE_ID TLV");
     this->add_tlv_string_(payload, TLV_TYPE_DEVICE_ID, this->device_id_);
-    ESP_LOGI(TAG, "- Device ID: %s", this->device_id_.c_str());
+    ESP_LOGD(TAG, "- Device ID: %s", this->device_id_.c_str());
 }
 
 void PowerSyncComponent::add_tlv_mac_address_(std::vector<uint8_t> &payload)
 {
-    ESP_LOGI(TAG, "Adding MAC_ADDRESS TLV");
+    ESP_LOGD(TAG, "Adding MAC_ADDRESS TLV");
     this->add_tlv_bytes_(payload, TLV_TYPE_MAC_ADDRESS, this->mac_address_bytes_, 6);
-    ESP_LOGI(TAG, "- MAC address: %02X:%02X:%02X:%02X:%02X:%02X",
+    ESP_LOGD(TAG, "- MAC address: %02X:%02X:%02X:%02X:%02X:%02X",
              this->mac_address_bytes_[0], this->mac_address_bytes_[1], this->mac_address_bytes_[2],
              this->mac_address_bytes_[3], this->mac_address_bytes_[4], this->mac_address_bytes_[5]);
 }
 
 void PowerSyncComponent::add_tlv_compile_time_(std::vector<uint8_t> &payload)
 {
-    ESP_LOGI(TAG, "Adding COMPILE_TIME TLV");
+    ESP_LOGD(TAG, "Adding COMPILE_TIME TLV");
     this->add_tlv_string_(payload, TLV_TYPE_COMPILE_TIME, this->compile_time_);
-    ESP_LOGI(TAG, "- Compile time: %s", this->compile_time_.c_str());
+    ESP_LOGD(TAG, "- Compile time: %s", this->compile_time_.c_str());
 }
 
 void PowerSyncComponent::add_tlv_firmware_version_(std::vector<uint8_t> &payload)
 {
-    ESP_LOGI(TAG, "Adding FIRMWARE_VER TLV");
+    ESP_LOGD(TAG, "Adding FIRMWARE_VER TLV");
     this->add_tlv_string_(payload, TLV_TYPE_FIRMWARE_VER, this->firmware_version_);
-    ESP_LOGI(TAG, "- Firmware version: %s", this->firmware_version_.c_str());
+    ESP_LOGD(TAG, "- Firmware version: %s", this->firmware_version_.c_str());
 }
 
 void PowerSyncComponent::add_tlv_ac_voltage_(std::vector<uint8_t> &payload)
 {
-    ESP_LOGI(TAG, "Adding AC_VOLTAGE TLV (from global variable)");
+    ESP_LOGD(TAG, "Adding AC_VOLTAGE TLV (from global variable)");
     this->add_tlv_float_(payload, TLV_TYPE_AC_VOLTAGE, this->tlv_ac_voltage_);
-    ESP_LOGI(TAG, "- AC voltage: %.1f V", this->tlv_ac_voltage_);
+    ESP_LOGD(TAG, "- AC voltage: %.1f V", this->tlv_ac_voltage_);
 }
 
 void PowerSyncComponent::add_tlv_ac_current_(std::vector<uint8_t> &payload)
 {
-    ESP_LOGI(TAG, "Adding AC_CURRENT TLV (fixed-point version)");
+    ESP_LOGD(TAG, "Adding AC_CURRENT TLV (fixed-point version)");
     this->add_tlv_int32_(payload, TLV_TYPE_AC_CURRENT, this->tlv_ac_current_ma_);
-    ESP_LOGI(TAG, "- AC current: %d mA (%.3f A)", this->tlv_ac_current_ma_, this->tlv_ac_current_ma_ / 1000.0f);
+    ESP_LOGD(TAG, "- AC current: %d mA (%.3f A)", this->tlv_ac_current_ma_, this->tlv_ac_current_ma_ / 1000.0f);
 }
 
 void PowerSyncComponent::add_tlv_ac_frequency_(std::vector<uint8_t> &payload)
 {
-    ESP_LOGI(TAG, "Adding AC_FREQUENCY TLV (from global variable)");
+    ESP_LOGD(TAG, "Adding AC_FREQUENCY TLV (from global variable)");
     this->add_tlv_float_(payload, TLV_TYPE_AC_FREQUENCY, this->tlv_ac_frequency_);
-    ESP_LOGI(TAG, "- AC frequency: %.2f Hz", this->tlv_ac_frequency_);
+    ESP_LOGD(TAG, "- AC frequency: %.2f Hz", this->tlv_ac_frequency_);
 }
 
 void PowerSyncComponent::add_tlv_ac_power_(std::vector<uint8_t> &payload)
 {
+    // we use INFO level here because power is a key metric
     ESP_LOGI(TAG, "Adding AC_POWER TLV (fixed-point version)");
     this->add_tlv_int32_(payload, TLV_TYPE_AC_POWER, this->tlv_ac_power_mw_);
     ESP_LOGI(TAG, "- AC power: %d mW (%.3f W)", this->tlv_ac_power_mw_, this->tlv_ac_power_mw_ / 1000.0f);
@@ -406,34 +407,34 @@ void PowerSyncComponent::add_tlv_ac_power_(std::vector<uint8_t> &payload)
 
 void PowerSyncComponent::add_tlv_device_role_(std::vector<uint8_t> &payload)
 {
-    ESP_LOGI(TAG, "Adding DEVICE_ROLE TLV");
+    ESP_LOGD(TAG, "Adding DEVICE_ROLE TLV");
     payload.push_back(TLV_TYPE_DEVICE_ROLE);
     payload.push_back(1); // Length: 1 byte
     uint8_t role_value = static_cast<uint8_t>(this->device_role_);
     payload.push_back(role_value);
     
     // Use shared TLV helper function from powersync_tlv_format.h (C-compatible)
-    ESP_LOGI(TAG, "- Device role: %s (%d)", 
+    ESP_LOGD(TAG, "- Device role: %s (%d)", 
              tlv_device_role_to_string(role_value), 
              role_value);
 }
 
 void PowerSyncComponent::add_tlv_free_memory_(std::vector<uint8_t> &payload)
 {
-    ESP_LOGI(TAG, "Adding FREE_MEMORY TLV");
+    ESP_LOGD(TAG, "Adding FREE_MEMORY TLV");
     this->add_tlv_uint32_(payload, TLV_TYPE_FREE_MEMORY, this->free_memory_);
-    ESP_LOGI(TAG, "- Free memory: %lu Bytes (%.1f KB)", this->free_memory_, this->free_memory_ / 1024.0f);
+    ESP_LOGD(TAG, "- Free memory: %lu Bytes (%.1f KB)", this->free_memory_, this->free_memory_ / 1024.0f);
 }
 
 void PowerSyncComponent::add_tlv_status_flags_(std::vector<uint8_t> &payload)
 {
-    ESP_LOGI(TAG, "Adding STATUS_FLAGS TLV");
+    ESP_LOGD(TAG, "Adding STATUS_FLAGS TLV");
     uint16_t status_flags = STATUS_POWER_ON | STATUS_ESP_NOW_ACTIVE;
     payload.push_back(TLV_TYPE_STATUS_FLAGS);
     payload.push_back(2); // Length
     payload.push_back((status_flags >> 8) & 0xFF);
     payload.push_back(status_flags & 0xFF);
-    ESP_LOGI(TAG, "- Status flags: 0x%04X", status_flags);
+    ESP_LOGD(TAG, "- Status flags: 0x%04X", status_flags);
 }
 
 // Utility methods implementation
@@ -579,7 +580,7 @@ bool PowerSyncComponent::tlv_parse_callback_(uint8_t type, uint8_t length, const
     // Use TLV helper function to get type name
     const char* type_name = tlv_type_to_string(type);
     
-    ESP_LOGI(TAG, "📦 TLV Entry: Type=0x%02X (%s), Length=%d", type, type_name, length);
+    ESP_LOGD(TAG, "📦 TLV Entry: Type=0x%02X (%s), Length=%d", type, type_name, length);
     
     // Parse different TLV types and store in context
     switch (type) {
@@ -587,7 +588,7 @@ bool PowerSyncComponent::tlv_parse_callback_(uint8_t type, uint8_t length, const
             if (length == TLV_SIZE_UPTIME) {
                 ctx->device_state.uptime = TLV_UINT32_FROM_BE(value);
                 ctx->has_uptime = true;
-                ESP_LOGI(TAG, "   ⏱️  Uptime: %lu seconds (%.2f hours)", 
+                ESP_LOGD(TAG, "   ⏱️  Uptime: %lu seconds (%.2f hours)", 
                          ctx->device_state.uptime, ctx->device_state.uptime / 3600.0f);
             } else {
                 ESP_LOGW(TAG, "   ⚠️  Invalid uptime length: %d (expected %d)", length, TLV_SIZE_UPTIME);
@@ -598,7 +599,7 @@ bool PowerSyncComponent::tlv_parse_callback_(uint8_t type, uint8_t length, const
         case TLV_TYPE_TIMESTAMP: {
             if (length == TLV_SIZE_TIMESTAMP) {
                 uint32_t timestamp = TLV_UINT32_FROM_BE(value);
-                ESP_LOGI(TAG, "   🕐 Timestamp: %lu", timestamp);
+                ESP_LOGD(TAG, "   🕐 Timestamp: %lu", timestamp);
             }
             break;
         }
@@ -607,7 +608,7 @@ bool PowerSyncComponent::tlv_parse_callback_(uint8_t type, uint8_t length, const
             if (length > 0 && length <= TLV_MAX_DEVICE_ID_LEN) {
                 char device_id[TLV_MAX_DEVICE_ID_LEN + 1] = {0};
                 memcpy(device_id, value, length);
-                ESP_LOGI(TAG, "   🏷️  Device ID: %s", device_id);
+                ESP_LOGD(TAG, "   🏷️  Device ID: %s", device_id);
             }
             break;
         }
@@ -618,14 +619,14 @@ bool PowerSyncComponent::tlv_parse_callback_(uint8_t type, uint8_t length, const
                 memcpy(firmware, value, length);
                 ctx->device_state.firmware_version = std::string(firmware);
                 ctx->has_firmware = true;
-                ESP_LOGI(TAG, "   📌 Firmware: %s", firmware);
+                ESP_LOGD(TAG, "   📌 Firmware: %s", firmware);
             }
             break;
         }
         
         case TLV_TYPE_MAC_ADDRESS: {
             if (length == TLV_SIZE_MAC_ADDRESS) {
-                ESP_LOGI(TAG, "   🌐 MAC: %02X:%02X:%02X:%02X:%02X:%02X",
+                ESP_LOGD(TAG, "   🌐 MAC: %02X:%02X:%02X:%02X:%02X:%02X",
                         value[0], value[1], value[2], value[3], value[4], value[5]);
             }
             break;
@@ -635,7 +636,7 @@ bool PowerSyncComponent::tlv_parse_callback_(uint8_t type, uint8_t length, const
             if (length > 0 && length <= TLV_MAX_COMPILE_TIME_LEN) {
                 char compile_time[TLV_MAX_COMPILE_TIME_LEN + 1] = {0};
                 memcpy(compile_time, value, length);
-                ESP_LOGI(TAG, "   🔨 Compile time: %s", compile_time);
+                ESP_LOGD(TAG, "   🔨 Compile time: %s", compile_time);
             }
             break;
         }
@@ -643,7 +644,7 @@ bool PowerSyncComponent::tlv_parse_callback_(uint8_t type, uint8_t length, const
         case TLV_TYPE_FREE_MEMORY: {
             if (length == TLV_SIZE_FREE_MEMORY) {
                 uint32_t free_mem = TLV_UINT32_FROM_BE(value);
-                ESP_LOGI(TAG, "   💾 Free memory: %lu bytes (%.1f KB)", free_mem, free_mem / 1024.0f);
+                ESP_LOGD(TAG, "   💾 Free memory: %lu bytes (%.1f KB)", free_mem, free_mem / 1024.0f);
             }
             break;
         }
@@ -654,7 +655,7 @@ bool PowerSyncComponent::tlv_parse_callback_(uint8_t type, uint8_t length, const
                 ctx->device_state.role = static_cast<DeviceRole>(role);
                 ctx->has_role = true;
                 const char* role_name = tlv_device_role_to_string(role);
-                ESP_LOGI(TAG, "   🎭 Device role: %s (%d)", role_name, role);
+                ESP_LOGD(TAG, "   🎭 Device role: %s (%d)", role_name, role);
             }
             break;
         }
@@ -663,7 +664,7 @@ bool PowerSyncComponent::tlv_parse_callback_(uint8_t type, uint8_t length, const
             if (length == TLV_SIZE_AC_VOLTAGE) {
                 TLV_FLOAT32_FROM_BE(value, ctx->device_state.voltage);
                 ctx->has_voltage = true;
-                ESP_LOGI(TAG, "   ⚡ AC Voltage: %.1f V", ctx->device_state.voltage);
+                ESP_LOGD(TAG, "   ⚡ AC Voltage: %.1f V", ctx->device_state.voltage);
             }
             break;
         }
@@ -673,7 +674,7 @@ bool PowerSyncComponent::tlv_parse_callback_(uint8_t type, uint8_t length, const
                 int32_t current_ma = TLV_INT32_FROM_BE(value);
                 ctx->device_state.current = TLV_CURRENT_MA_TO_A(current_ma);
                 ctx->has_current = true;
-                ESP_LOGI(TAG, "   🔌 AC Current: %.3f A (%d mA)", ctx->device_state.current, current_ma);
+                ESP_LOGD(TAG, "   🔌 AC Current: %.3f A (%d mA)", ctx->device_state.current, current_ma);
             }
             break;
         }
@@ -682,7 +683,7 @@ bool PowerSyncComponent::tlv_parse_callback_(uint8_t type, uint8_t length, const
             if (length == TLV_SIZE_AC_FREQUENCY) {
                 float frequency;
                 TLV_FLOAT32_FROM_BE(value, frequency);
-                ESP_LOGI(TAG, "   📻 AC Frequency: %.2f Hz", frequency);
+                ESP_LOGD(TAG, "   📻 AC Frequency: %.2f Hz", frequency);
             }
             break;
         }
@@ -692,7 +693,7 @@ bool PowerSyncComponent::tlv_parse_callback_(uint8_t type, uint8_t length, const
                 int32_t power_mw = TLV_INT32_FROM_BE(value);
                 ctx->device_state.power = TLV_POWER_MW_TO_W(power_mw);
                 ctx->has_power = true;
-                ESP_LOGI(TAG, "   💡 AC Power: %.3f W (%d mW)", ctx->device_state.power, power_mw);
+                ESP_LOGD(TAG, "   💡 AC Power: %.3f W (%d mW)", ctx->device_state.power, power_mw);
             }
             break;
         }
@@ -701,7 +702,7 @@ bool PowerSyncComponent::tlv_parse_callback_(uint8_t type, uint8_t length, const
             if (length == TLV_SIZE_AC_POWER_FACTOR) {
                 float power_factor;
                 TLV_FLOAT32_FROM_BE(value, power_factor);
-                ESP_LOGI(TAG, "   📊 Power Factor: %.3f", power_factor);
+                ESP_LOGD(TAG, "   📊 Power Factor: %.3f", power_factor);
             }
             break;
         }
@@ -710,7 +711,7 @@ bool PowerSyncComponent::tlv_parse_callback_(uint8_t type, uint8_t length, const
             if (length == TLV_SIZE_ENERGY_TOTAL) {
                 float energy;
                 TLV_FLOAT32_FROM_BE(value, energy);
-                ESP_LOGI(TAG, "   🔋 Total Energy: %.2f kWh", energy);
+                ESP_LOGD(TAG, "   🔋 Total Energy: %.2f kWh", energy);
             }
             break;
         }
@@ -719,7 +720,7 @@ bool PowerSyncComponent::tlv_parse_callback_(uint8_t type, uint8_t length, const
             if (length == TLV_SIZE_ENERGY_TODAY) {
                 float energy;
                 TLV_FLOAT32_FROM_BE(value, energy);
-                ESP_LOGI(TAG, "   📅 Today's Energy: %.2f kWh", energy);
+                ESP_LOGD(TAG, "   📅 Today's Energy: %.2f kWh", energy);
             }
             break;
         }
@@ -727,13 +728,13 @@ bool PowerSyncComponent::tlv_parse_callback_(uint8_t type, uint8_t length, const
         case TLV_TYPE_STATUS_FLAGS: {
             if (length == TLV_SIZE_STATUS_FLAGS) {
                 uint16_t flags = TLV_UINT16_FROM_BE(value);
-                ESP_LOGI(TAG, "   🚦 Status Flags: 0x%04X", flags);
-                if (flags & STATUS_FLAG_POWER_ON) ESP_LOGI(TAG, "      - Power ON");
-                if (flags & STATUS_FLAG_CALIBRATING) ESP_LOGI(TAG, "      - Calibrating");
-                if (flags & STATUS_FLAG_ERROR) ESP_LOGI(TAG, "      - Error");
-                if (flags & STATUS_FLAG_LOW_BATTERY) ESP_LOGI(TAG, "      - Low Battery");
-                if (flags & STATUS_FLAG_WIFI_CONNECTED) ESP_LOGI(TAG, "      - WiFi Connected");
-                if (flags & STATUS_FLAG_ESP_NOW_ACTIVE) ESP_LOGI(TAG, "      - ESP-NOW Active");
+                ESP_LOGD(TAG, "   🚦 Status Flags: 0x%04X", flags);
+                if (flags & STATUS_FLAG_POWER_ON) ESP_LOGD(TAG, "      - Power ON");
+                if (flags & STATUS_FLAG_CALIBRATING) ESP_LOGD(TAG, "      - Calibrating");
+                if (flags & STATUS_FLAG_ERROR) ESP_LOGD(TAG, "      - Error");
+                if (flags & STATUS_FLAG_LOW_BATTERY) ESP_LOGD(TAG, "      - Low Battery");
+                if (flags & STATUS_FLAG_WIFI_CONNECTED) ESP_LOGD(TAG, "      - WiFi Connected");
+                if (flags & STATUS_FLAG_ESP_NOW_ACTIVE) ESP_LOGD(TAG, "      - ESP-NOW Active");
             }
             break;
         }
@@ -741,7 +742,7 @@ bool PowerSyncComponent::tlv_parse_callback_(uint8_t type, uint8_t length, const
         case TLV_TYPE_ERROR_CODE: {
             if (length == TLV_SIZE_ERROR_CODE) {
                 uint16_t error_code = TLV_UINT16_FROM_BE(value);
-                ESP_LOGI(TAG, "   ❌ Error Code: 0x%04X", error_code);
+                ESP_LOGD(TAG, "   ❌ Error Code: 0x%04X", error_code);
             }
             break;
         }
@@ -750,7 +751,7 @@ bool PowerSyncComponent::tlv_parse_callback_(uint8_t type, uint8_t length, const
             if (length == TLV_SIZE_TEMPERATURE) {
                 float temperature;
                 TLV_FLOAT32_FROM_BE(value, temperature);
-                ESP_LOGI(TAG, "   🌡️  Temperature: %.1f °C", temperature);
+                ESP_LOGD(TAG, "   🌡️  Temperature: %.1f °C", temperature);
             }
             break;
         }
@@ -759,7 +760,7 @@ bool PowerSyncComponent::tlv_parse_callback_(uint8_t type, uint8_t length, const
             if (length == TLV_SIZE_HUMIDITY) {
                 float humidity;
                 TLV_FLOAT32_FROM_BE(value, humidity);
-                ESP_LOGI(TAG, "   💧 Humidity: %.1f %%", humidity);
+                ESP_LOGD(TAG, "   💧 Humidity: %.1f %%", humidity);
             }
             break;
         }
@@ -805,11 +806,11 @@ void PowerSyncComponent::espnow_task_function_(void *pvParameters)
                     
                     // Validate TLV packet structure before parsing
                     if (tlv_validate_packet(msg.body, msg.body_length)) {
-                        ESP_LOGI(TAG, "✅ TLV packet structure is valid");
+                        ESP_LOGD(TAG, "✅ TLV packet structure is valid");
                         
                         // Count TLV entries
                         int entry_count = tlv_count_entries(msg.body, msg.body_length);
-                        ESP_LOGI(TAG, "📊 TLV packet contains %d entries", entry_count);
+                        ESP_LOGD(TAG, "📊 TLV packet contains %d entries", entry_count);
                         
                         // Create parsing context
                         TLVParseContext ctx;
@@ -823,7 +824,7 @@ void PowerSyncComponent::espnow_task_function_(void *pvParameters)
                                                      &ctx);
                         
                         if (parsed >= 0) {
-                            ESP_LOGI(TAG, "✅ Successfully parsed %d TLV entries", parsed);
+                            ESP_LOGD(TAG, "✅ Successfully parsed %d TLV entries", parsed);
                             
                             // Update device state if we have valid role and at least one measurement
                             if (ctx.has_role && (ctx.has_voltage || ctx.has_current || ctx.has_power)) {
@@ -856,7 +857,7 @@ void PowerSyncComponent::espnow_task_function_(void *pvParameters)
                                 // Mark device state as valid
                                 dev_state.is_valid = true;
                                 
-                                ESP_LOGI(TAG, "💾 Updated device state for role %s (V:%d I:%d P:%d U:%d F:%d)", 
+                                ESP_LOGD(TAG, "💾 Updated device state for role %s (V:%d I:%d P:%d U:%d F:%d)", 
                                          tlv_device_role_to_string(ctx.device_state.role),
                                          ctx.has_voltage, ctx.has_current, ctx.has_power,
                                          ctx.has_uptime, ctx.has_firmware);
