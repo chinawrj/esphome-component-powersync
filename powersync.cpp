@@ -19,6 +19,11 @@ namespace esphome
 namespace powersync
 {
 
+// Grid feed state constants (三态逻辑)
+static constexpr int8_t GRID_FEED_STATE_INVALID = -1;  // 初始状态（未知）
+static constexpr int8_t GRID_FEED_STATE_NORMAL = 0;    // 正常状态（功率>=0）
+static constexpr int8_t GRID_FEED_STATE_FEEDING = 1;   // 逆功率状态（功率<0）
+
 PowerSyncComponent *PowerSyncComponent::instance_ = nullptr;
 
 PowerSyncComponent::~PowerSyncComponent()
@@ -255,7 +260,7 @@ std::vector<uint8_t> PowerSyncComponent::build_tlv_packet_()
 
 void PowerSyncComponent::broadcast_tlv_data_()
 {
-    ESP_LOGI(TAG, "📡 ESP-NOW ready, sending TLV broadcast packet...");
+    ESP_LOGD(TAG, "📡 ESP-NOW ready, sending TLV broadcast packet...");
 
     std::vector<uint8_t> payload = this->build_tlv_packet_();
 
@@ -401,9 +406,9 @@ void PowerSyncComponent::add_tlv_ac_frequency_(std::vector<uint8_t> &payload)
 void PowerSyncComponent::add_tlv_ac_power_(std::vector<uint8_t> &payload)
 {
     // we use INFO level here because power is a key metric
-    ESP_LOGI(TAG, "Adding AC_POWER TLV (fixed-point version)");
+    ESP_LOGD(TAG, "Adding AC_POWER TLV (fixed-point version)");
     this->add_tlv_int32_(payload, TLV_TYPE_AC_POWER, this->tlv_ac_power_mw_);
-    ESP_LOGI(TAG, "- AC power: %d mW (%.3f W)", this->tlv_ac_power_mw_, this->tlv_ac_power_mw_ / 1000.0f);
+    ESP_LOGD(TAG, "- AC power: %d mW (%.3f W)", this->tlv_ac_power_mw_, this->tlv_ac_power_mw_ / 1000.0f);
 }
 
 void PowerSyncComponent::add_tlv_device_role_(std::vector<uint8_t> &payload)
@@ -858,12 +863,12 @@ void PowerSyncComponent::espnow_task_function_(void *pvParameters)
                 }
                     
                 case DATA_TLV_RECEIVED:
-                    ESP_LOGI(TAG, "Processing DATA_TLV_RECEIVED message from queue");
-                    ESP_LOGI(TAG, "- Source MAC: %02X:%02X:%02X:%02X:%02X:%02X",
+                    ESP_LOGD(TAG, "Processing DATA_TLV_RECEIVED message from queue");
+                    ESP_LOGD(TAG, "- Source MAC: %02X:%02X:%02X:%02X:%02X:%02X",
                              msg.src_addr[0], msg.src_addr[1], msg.src_addr[2], 
                              msg.src_addr[3], msg.src_addr[4], msg.src_addr[5]);
-                    ESP_LOGI(TAG, "- Data length: %zu bytes", msg.body_length);
-                    ESP_LOGI(TAG, "- RSSI: %d dBm", msg.rssi);
+                    ESP_LOGD(TAG, "- Data length: %zu bytes", msg.body_length);
+                    ESP_LOGD(TAG, "- RSSI: %d dBm", msg.rssi);
                     
                     // Validate TLV packet structure before parsing
                     if (tlv_validate_packet(msg.body, msg.body_length)) {
@@ -1159,6 +1164,12 @@ void PowerSyncComponent::make_power_management_decisions_()
             break;
     }
     
+    // Update state duration tracking for all device roles (after strategy execution)
+    // This is a generic feature that tracks continuous state duration based on power sign
+    if (this->state_duration_sensor_ != nullptr) {
+        this->update_state_duration_();
+    }
+    
     ESP_LOGV(TAG, "Power management decision cycle completed for role: %s", 
              tlv_device_role_to_string(this->device_role_));
 }
@@ -1172,11 +1183,19 @@ void PowerSyncComponent::strategy_inverter_ac_input_()
     // Strategy: Monitor own power for reverse feed (grid feed)
     // Priority 1: Check own power first - if negative (reverse feed), immediately disconnect relay
     // Priority 2: If own power is positive or zero, then monitor solar inverter for coordination
+    // 
+    // Protection Features:
+    // - Edge-triggered logging: Log only on state change (normal ↔ grid feed)
+    // - Rate-limited reminders: Periodic logs during persistent grid feed (every 5s)
+    // - Rate-limited relay control: Prevent relay chattering (minimum 5s interval)
     
     ESP_LOGV(TAG, "🔌 Executing INVERTER_AC_INPUT strategy");
     
+    uint32_t now = millis();
+    
+    // ========================================================================
     // Priority 1: Check own device power for reverse feed (grid feed)
-    // Get own device state from device_states_ array
+    // ========================================================================
     const DeviceState* own_state = this->get_device_state(this->device_role_);
     
     if (own_state != nullptr) {
@@ -1184,60 +1203,138 @@ void PowerSyncComponent::strategy_inverter_ac_input_()
         float own_power_w = own_state->power;
         
         if (own_power_w < 0.0f) {
-            ESP_LOGW(TAG, "⚠️ CRITICAL: Own power is NEGATIVE (grid feed detected): %.2f W", own_power_w);
-            ESP_LOGW(TAG, "🔌 Triggering immediate DLT645 relay disconnect to prevent reverse feed");
+            // Grid feed detected!
             
-            // Trigger relay trip via binary sensor (cross-module control)
-            if (this->dlt645_relay_trip_sensor_ != nullptr) {
-                // Publish a state change to trigger the relay trip automation
-                this->dlt645_relay_trip_sensor_->publish_state(true);
-                
-                ESP_LOGI(TAG, "✅ DLT645 relay trip command sent via binary sensor (grid feed protection)");
-                
-                // Reset the binary sensor state after a short delay to allow re-triggering
-                // This is handled by the ESPHome automation framework
-            } else {
-                ESP_LOGE(TAG, "❌ DLT645 relay trip sensor not configured!");
+            // Edge-triggered logging: Only log on state transition (normal/invalid → grid feed)
+            if (this->last_grid_feed_state_own_ != GRID_FEED_STATE_FEEDING) {
+                ESP_LOGW(TAG, "⚠️ CRITICAL: Own power grid feed STARTED - Power: %.2f W", own_power_w);
+                this->last_grid_feed_state_own_ = GRID_FEED_STATE_FEEDING;
+                this->grid_feed_start_time_own_ = now;        // Record state start time
+                this->last_grid_feed_log_time_own_ = now;     // Initialize last log time
+            }
+            // Rate-limited reminder: Log periodically during persistent grid feed
+            else if (now - this->last_grid_feed_log_time_own_ >= this->grid_feed_log_interval_) {
+                // Calculate total duration since state started (from grid_feed_start_time_own_)
+                uint32_t duration_s = (now - this->grid_feed_start_time_own_) / 1000;
+                ESP_LOGW(TAG, "⚠️ Own power grid feed ONGOING - Power: %.2f W (已持续 %lu 秒)", 
+                         own_power_w, duration_s);
+                this->last_grid_feed_log_time_own_ = now;     // Update last log time for next rate limit check
             }
             
-            // Return immediately - no need to check solar inverter data
+                // Send relay trip command (no rate limit on state change)
+                // Rate limiting REMOVED: We only send commands on state transitions now,
+                // so there's no risk of chattering. If we suppress the command here due to
+                // rate limit, the relay state will be out of sync with the desired state.
+                if (this->dlt645_relay_trip_sensor_ != nullptr) {
+                    // CRITICAL: Use pulse mode (false -> true) to trigger on_state event
+                    this->dlt645_relay_trip_sensor_->publish_state(false);
+                    this->dlt645_relay_trip_sensor_->publish_state(true);
+                    this->last_relay_trip_time_ = now;  // Track for logging purposes only
+                    
+                    ESP_LOGI(TAG, "✅ DLT645 relay trip pulse sent (own grid feed protection)");
+                } else {
+                    ESP_LOGE(TAG, "❌ DLT645 relay trip sensor not configured!");
+                }            // Return immediately - no need to check solar inverter data
             return;
+            
         } else {
-            ESP_LOGD(TAG, "✅ Own power is positive or zero (normal operation): %.2f W", own_power_w);
+            // Power is positive or zero. No action is required, since we only close replay on solar inverter state.
+            // Empty block for clarity.
         }
     } else {
-        ESP_LOGW(TAG, "⚠️ Own device state not available - cannot check for grid feed");
+        ESP_LOGV(TAG, "⚠️ Own device state not available - cannot check for grid feed");
     }
     
-    // Priority 2: Check solar inverter output for reverse power (only if own power is not negative)
+    // ========================================================================
+    // Priority 2: Check solar inverter output for reverse power
+    // (Only executed if own power is not negative)
+    // ========================================================================
     const DeviceState* solar_state = this->get_device_state(ROLE_SOLOAR_INVERTER_OUTPUT_TOTAL);
     
     if (solar_state != nullptr) {
         // Check if data is fresh (within configured timeout)
         if (solar_state->data_age_ms <= this->power_decision_data_timeout_) {
             // Solar inverter is active and reporting with fresh data
-            ESP_LOGD(TAG, "🌞 Solar inverter detected - Power: %.2f W (data age: %lu ms)", 
+            ESP_LOGV(TAG, "🌞 Solar inverter detected - Power: %.2f W (data age: %lu ms)", 
                      solar_state->power, solar_state->data_age_ms);
             
             // Check if solar power is negative (reverse power flow from solar)
             if (solar_state->power < 0.0f) {
-                ESP_LOGW(TAG, "⚠️ CRITICAL: Solar inverter reporting NEGATIVE power (reverse feed): %.2f W", solar_state->power);
-                ESP_LOGW(TAG, "🔌 Triggering DLT645 relay disconnect to prevent solar reverse feed");
+                // Solar grid feed detected!
                 
-                // Trigger relay trip via binary sensor (cross-module control)
+                // Edge-triggered logging: Only log on state transition (normal/invalid → grid feed)
+                if (this->last_grid_feed_state_solar_ != GRID_FEED_STATE_FEEDING) {
+                    ESP_LOGW(TAG, "⚠️ CRITICAL: Solar inverter grid feed STARTED - Power: %.2f W", solar_state->power);
+                    this->last_grid_feed_state_solar_ = GRID_FEED_STATE_FEEDING;
+                    this->grid_feed_start_time_solar_ = now;      // Record state start time
+                    this->last_grid_feed_log_time_solar_ = now;   // Initialize last log time
+                }
+                // Rate-limited reminder: Log periodically during persistent grid feed
+                else if (now - this->last_grid_feed_log_time_solar_ >= this->grid_feed_log_interval_) {
+                    // Calculate total duration since state started (from grid_feed_start_time_solar_)
+                    uint32_t duration_s = (now - this->grid_feed_start_time_solar_) / 1000;
+                    ESP_LOGW(TAG, "⚠️ Solar inverter grid feed ONGOING - Power: %.2f W (已持续 %lu 秒)", 
+                             solar_state->power, duration_s);
+                    this->last_grid_feed_log_time_solar_ = now;   // Update last log time for next rate limit check
+                }
+                
+                // Send relay trip command (no rate limit on state change)
                 if (this->dlt645_relay_trip_sensor_ != nullptr) {
-                    // Publish a state change to trigger the relay trip automation
+                    // CRITICAL: Use pulse mode (false -> true) to trigger on_state event
+                    this->dlt645_relay_trip_sensor_->publish_state(false);
                     this->dlt645_relay_trip_sensor_->publish_state(true);
+                    this->last_relay_trip_time_ = now;  // Track for logging purposes only
                     
-                    ESP_LOGI(TAG, "✅ DLT645 relay trip command sent via binary sensor (solar reverse feed protection)");
-                    
-                    // Reset the binary sensor state after a short delay to allow re-triggering
-                    // This is handled by the ESPHome automation framework
+                    ESP_LOGI(TAG, "✅ DLT645 relay trip pulse sent (solar grid feed protection)");
                 } else {
                     ESP_LOGE(TAG, "❌ DLT645 relay trip sensor not configured!");
                 }
+                
             } else {
-                ESP_LOGD(TAG, "✅ Solar power is positive (normal production): %.2f W", solar_state->power);
+                // Solar power is positive (normal production)
+                
+                // Edge-triggered logging: Log state transition (grid feed/invalid → normal)
+                if (this->last_grid_feed_state_solar_ == GRID_FEED_STATE_FEEDING) {
+                    // Transition from GRID_FEED to NORMAL - relay was tripped, now restore
+                    ESP_LOGI(TAG, "✅ Solar inverter grid feed RESOLVED - Power back to normal: %.2f W", solar_state->power);
+                    this->last_grid_feed_state_solar_ = GRID_FEED_STATE_NORMAL;
+                    
+                    // Send relay close command (no rate limit on state change)
+                    if (this->dlt645_relay_close_sensor_ != nullptr) {
+                        // CRITICAL: Use pulse mode (false -> true) to trigger on_state event
+                        this->dlt645_relay_close_sensor_->publish_state(false);
+                        this->dlt645_relay_close_sensor_->publish_state(true);
+                        this->last_relay_close_time_ = now;  // Track for logging purposes only
+                        
+                        ESP_LOGI(TAG, "✅ DLT645 relay close pulse sent (grid connection restored after grid feed resolved)");
+                    } else {
+                        ESP_LOGW(TAG, "⚠️ DLT645 relay close sensor not configured - cannot auto-restore grid connection");
+                    }
+                } else if (this->last_grid_feed_state_solar_ == GRID_FEED_STATE_INVALID) {
+                    // First time detection with normal power - CRITICAL: Need to sync relay state
+                    // We don't know the relay's actual state, so we proactively send close command
+                    ESP_LOGI(TAG, "✅ Solar inverter state initialized - Normal production: %.2f W", solar_state->power);
+                    ESP_LOGI(TAG, "🔄 Syncing relay state on first detection (sending close command to ensure connection)");
+                    this->last_grid_feed_state_solar_ = GRID_FEED_STATE_NORMAL;
+                    
+                    // Send relay close command (no rate limit on initial sync)
+                    if (this->dlt645_relay_close_sensor_ != nullptr) {
+                        // CRITICAL: Use pulse mode (false -> true) to trigger on_state event
+                        this->dlt645_relay_close_sensor_->publish_state(false);
+                        this->dlt645_relay_close_sensor_->publish_state(true);
+                        this->last_relay_close_time_ = now;  // Track for logging purposes only
+                        
+                        ESP_LOGI(TAG, "✅ DLT645 relay close pulse sent (initial state sync)");
+                    } else {
+                        ESP_LOGW(TAG, "⚠️ DLT645 relay close sensor not configured - cannot sync relay state");
+                    }
+                } else if (this->last_grid_feed_state_solar_ == GRID_FEED_STATE_NORMAL) {
+                    // Already in NORMAL state - no action needed (state-based optimization)
+                    // Only send relay commands on state transitions to avoid unnecessary operations
+                    ESP_LOGV(TAG, "ℹ️ Solar power remains normal: %.2f W (no relay action needed)", solar_state->power);
+                }
+                
+                ESP_LOGV(TAG, "✅ Solar power is positive (normal production): %.2f W", solar_state->power);
             }
         } else {
             ESP_LOGW(TAG, "⚠️ Solar inverter data is stale (age: %lu ms, timeout: %lu ms) - Skipping power decision",
@@ -1314,10 +1411,115 @@ void PowerSyncComponent::strategy_sinker_dc_vehicle_charger_()
 
 void PowerSyncComponent::strategy_solar_inverter_output_total_()
 {
-    // Strategy: Monitor solar inverter output and report production data
-    // This role is typically a data source, not a decision maker
+    // Strategy: Monitor solar inverter output
+    // State duration tracking is now handled by the generic update_state_duration_() method
     
-    ESP_LOGV(TAG, "🌞 Executing SOLOAR_INVERTER_OUTPUT_TOTAL strategy (data source role)");
+    ESP_LOGV(TAG, "🌞 Executing SOLOAR_INVERTER_OUTPUT_TOTAL strategy");
+    
+    // Additional solar-specific logic can be added here if needed
+    // For now, this strategy just relies on the common state duration tracking
+}
+
+// ============================================================================
+// Generic State Duration Tracking (for all device roles)
+// ============================================================================
+
+void PowerSyncComponent::update_state_duration_()
+{
+    // Generic state duration tracking based on power sign
+    // Works for all device roles that have power measurement
+    // - Negative power (generation/reverse flow): accumulate negative duration
+    // - Positive power (consumption/forward flow): accumulate positive duration
+    // - Power sign change: reset duration to 0
+    
+    uint32_t now = millis();
+    
+    // Get own device state
+    const DeviceState* own_state = this->get_device_state(this->device_role_);
+    
+    if (own_state == nullptr) {
+        ESP_LOGV(TAG, "⚠️ Own device state not available - cannot track state duration");
+        return;
+    }
+    
+    // Check if data is fresh (within configured timeout)
+    if (own_state->data_age_ms > this->power_decision_data_timeout_) {
+        ESP_LOGV(TAG, "⚠️ Own device data is stale (age: %lu ms) - skipping state duration update",
+                 own_state->data_age_ms);
+        return;
+    }
+    
+    float current_power = own_state->power;
+    bool current_power_is_negative = (current_power < 0.0f);
+    
+    // Initialize on first run
+    if (this->last_state_update_time_ == 0) {
+        this->last_state_update_time_ = now;
+        this->last_power_was_negative_ = current_power_is_negative;
+        this->state_duration_seconds_ = 0;
+        ESP_LOGI(TAG, "📊 State duration tracking initialized (power: %.2f W, sign: %s)",
+                 current_power, current_power_is_negative ? "negative/generation" : "positive/consumption");
+        return;
+    }
+    
+    // Calculate time elapsed since last update (in seconds)
+    uint32_t time_elapsed_ms = now - this->last_state_update_time_;
+    int32_t time_elapsed_seconds = static_cast<int32_t>(time_elapsed_ms / 1000);
+    
+    // Skip if no significant time has passed (less than 1 second)
+    if (time_elapsed_seconds < 1) {
+        return;
+    }
+    
+    // Check for power sign change (state transition)
+    if (current_power_is_negative != this->last_power_was_negative_) {
+        // State transition detected - log final duration before reset
+        ESP_LOGI(TAG, "🔄 State transition detected:");
+        ESP_LOGI(TAG, "   Previous state: %s (duration: %d seconds = %.2f hours)",
+                 this->last_power_was_negative_ ? "generation (negative power)" : "consumption (positive power)",
+                 std::abs(this->state_duration_seconds_),
+                 std::abs(this->state_duration_seconds_) / 3600.0f);
+        ESP_LOGI(TAG, "   New state: %s (power: %.2f W)",
+                 current_power_is_negative ? "generation (negative power)" : "consumption (positive power)",
+                 current_power);
+        
+        // Reset duration to 0 on state transition
+        this->state_duration_seconds_ = 0;
+        this->last_power_was_negative_ = current_power_is_negative;
+        this->last_state_update_time_ = now;
+        
+        // Publish to sensor immediately
+        if (this->state_duration_sensor_ != nullptr) {
+            this->state_duration_sensor_->publish_state(0.0f);
+            ESP_LOGI(TAG, "✅ State duration sensor updated: 0 hours (reset on transition)");
+        }
+        
+        return;
+    }
+    
+    // Same state continues - accumulate duration
+    // Negative power -> accumulate negative duration (generation time)
+    // Positive power -> accumulate positive duration (consumption time)
+    if (current_power_is_negative) {
+        this->state_duration_seconds_ -= time_elapsed_seconds;  // Accumulate negative
+        ESP_LOGV(TAG, "📉 Generation state continues: power=%.2f W, duration=%d seconds (%.2f hours)",
+                 current_power, this->state_duration_seconds_, this->state_duration_seconds_ / 3600.0f);
+    } else {
+        this->state_duration_seconds_ += time_elapsed_seconds;  // Accumulate positive
+        ESP_LOGV(TAG, "📈 Consumption state continues: power=%.2f W, duration=%d seconds (%.2f hours)",
+                 current_power, this->state_duration_seconds_, this->state_duration_seconds_ / 3600.0f);
+    }
+    
+    // Update last update timestamp
+    this->last_state_update_time_ = now;
+    
+    // Publish to sensor (convert seconds to hours for Home Assistant)
+    if (this->state_duration_sensor_ != nullptr) {
+        float duration_hours = this->state_duration_seconds_ / 3600.0f;
+        this->state_duration_sensor_->publish_state(duration_hours);
+        ESP_LOGI(TAG, "✅ State duration sensor updated: %.2f hours (%d seconds)",
+                 duration_hours, this->state_duration_seconds_);
+    }
 }
 
 void PowerSyncComponent::dump_device_states_table_()

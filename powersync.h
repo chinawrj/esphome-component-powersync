@@ -141,9 +141,11 @@ class PowerSyncComponent : public Component {
   void set_ac_frequency_sensor(esphome::sensor::Sensor *sensor) { ac_frequency_sensor_ = sensor; }
   void set_ac_power_sensor(esphome::sensor::Sensor *sensor) { ac_power_sensor_ = sensor; }
   void set_button_press_count_sensor(esphome::sensor::Sensor *sensor) { button_press_count_sensor_ = sensor; }
+  void set_state_duration_sensor(esphome::sensor::Sensor *sensor) { state_duration_sensor_ = sensor; }
   
-  // DLT645 relay control binary sensor setter (for cross-module control)
+  // DLT645 relay control binary sensor setters (for cross-module control)
   void set_dlt645_relay_trip_sensor(esphome::binary_sensor::BinarySensor *sensor) { dlt645_relay_trip_sensor_ = sensor; }
+  void set_dlt645_relay_close_sensor(esphome::binary_sensor::BinarySensor *sensor) { dlt645_relay_close_sensor_ = sensor; }
 
   // Component lifecycle
   void setup() override;
@@ -179,12 +181,28 @@ class PowerSyncComponent : public Component {
   sensor::Sensor *ac_frequency_sensor_ = nullptr;
   sensor::Sensor *ac_power_sensor_ = nullptr;
   sensor::Sensor *button_press_count_sensor_ = nullptr;
+  sensor::Sensor *state_duration_sensor_ = nullptr;  // Continuous state duration sensor
   
-  // DLT645 relay control binary sensor (for cross-module control)
+  // DLT645 relay control binary sensors (for cross-module control)
   binary_sensor::BinarySensor *dlt645_relay_trip_sensor_ = nullptr;
+  binary_sensor::BinarySensor *dlt645_relay_close_sensor_ = nullptr;
 
   // Internal state
   bool espnow_ready_ = false;
+  
+  // Grid feed protection state tracking (for rate-limited logging and relay control)
+  // State values: -1=INVALID (unknown/初始状态), 0=NORMAL (正常), 1=GRID_FEED (逆功率)
+  int8_t last_grid_feed_state_own_ = -1;         // Own power grid feed state: -1=invalid, 0=normal, 1=grid_feed
+  int8_t last_grid_feed_state_solar_ = -1;       // Solar inverter grid feed state: -1=invalid, 0=normal, 1=grid_feed
+  uint32_t grid_feed_start_time_own_ = 0;        // State start time for own grid feed (for duration calculation)
+  uint32_t grid_feed_start_time_solar_ = 0;      // State start time for solar grid feed (for duration calculation)
+  uint32_t last_grid_feed_log_time_own_ = 0;     // Last log time for own grid feed (for rate limiting)
+  uint32_t last_grid_feed_log_time_solar_ = 0;   // Last log time for solar grid feed (for rate limiting)
+  uint32_t last_relay_trip_time_ = 0;            // Last relay trip command time
+  uint32_t last_relay_close_time_ = 0;           // Last relay close command time
+  uint32_t grid_feed_log_interval_ = 5000;       // Rate limit: log every 5 seconds
+  uint32_t relay_trip_min_interval_ = 5000;      // Rate limit: relay trip every 5 seconds
+  uint32_t relay_close_min_interval_ = 5000;     // Rate limit: relay close every 5 seconds
   uint32_t press_count_ = 0;
   float tlv_ac_voltage_ = 0.0f;
   int32_t tlv_ac_current_ma_ = 0;
@@ -193,6 +211,13 @@ class PowerSyncComponent : public Component {
   
   // Power change tracking for immediate broadcast trigger
   float last_broadcast_power_w_ = 0.0f;  // Last broadcast power value in watts
+
+  // State duration tracking for solar inverter (ROLE_SOLOAR_INVERTER_OUTPUT_TOTAL)
+  // Negative duration = generation time (negative power)
+  // Positive duration = consumption time (positive power)
+  int32_t state_duration_seconds_ = 0;       // Accumulated state duration in seconds (signed)
+  uint32_t last_state_update_time_ = 0;      // Last state update timestamp (millis())
+  bool last_power_was_negative_ = false;     // Previous power sign state (true = negative/generation)
 
   // System info (similar to esp32_system_info.yaml)
   std::string device_id_;
@@ -240,6 +265,9 @@ class PowerSyncComponent : public Component {
   void update_device_state_(DeviceRole role, const uint8_t *src_addr, int rssi);
   void dump_device_states_table_();  // Dump device states in table format
   void update_all_device_data_age_();  // Update data age for all valid devices
+  
+  // State duration tracking (generic method for all device roles)
+  void update_state_duration_();  // Update continuous state duration based on power sign
   
   // Master decision-making method based on network-wide device states
   void make_power_management_decisions_();
