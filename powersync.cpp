@@ -1186,8 +1186,8 @@ void PowerSyncComponent::strategy_inverter_ac_input_()
     // 
     // Protection Features:
     // - Edge-triggered logging: Log only on state change (normal ↔ grid feed)
+    // - Edge-triggered relay control: Send relay commands only on state transitions
     // - Rate-limited reminders: Periodic logs during persistent grid feed (every 5s)
-    // - Rate-limited relay control: Prevent relay chattering (minimum 5s interval)
     
     ESP_LOGV(TAG, "🔌 Executing INVERTER_AC_INPUT strategy");
     
@@ -1205,26 +1205,14 @@ void PowerSyncComponent::strategy_inverter_ac_input_()
         if (own_power_w < 0.0f) {
             // Grid feed detected!
             
-            // Edge-triggered logging: Only log on state transition (normal/invalid → grid feed)
+            // Edge-triggered logging AND relay control: Only act on state transition
             if (this->last_grid_feed_state_own_ != GRID_FEED_STATE_FEEDING) {
                 ESP_LOGW(TAG, "⚠️ CRITICAL: Own power grid feed STARTED - Power: %.2f W", own_power_w);
                 this->last_grid_feed_state_own_ = GRID_FEED_STATE_FEEDING;
                 this->grid_feed_start_time_own_ = now;        // Record state start time
                 this->last_grid_feed_log_time_own_ = now;     // Initialize last log time
-            }
-            // Rate-limited reminder: Log periodically during persistent grid feed
-            else if (now - this->last_grid_feed_log_time_own_ >= this->grid_feed_log_interval_) {
-                // Calculate total duration since state started (from grid_feed_start_time_own_)
-                uint32_t duration_s = (now - this->grid_feed_start_time_own_) / 1000;
-                ESP_LOGW(TAG, "⚠️ Own power grid feed ONGOING - Power: %.2f W (已持续 %lu 秒)", 
-                         own_power_w, duration_s);
-                this->last_grid_feed_log_time_own_ = now;     // Update last log time for next rate limit check
-            }
-            
-                // Send relay trip command (no rate limit on state change)
-                // Rate limiting REMOVED: We only send commands on state transitions now,
-                // so there's no risk of chattering. If we suppress the command here due to
-                // rate limit, the relay state will be out of sync with the desired state.
+                
+                // Send relay trip command ONLY on state transition to FEEDING
                 if (this->dlt645_relay_trip_sensor_ != nullptr) {
                     // CRITICAL: Use pulse mode (false -> true) to trigger on_state event
                     this->dlt645_relay_trip_sensor_->publish_state(false);
@@ -1234,12 +1222,39 @@ void PowerSyncComponent::strategy_inverter_ac_input_()
                     ESP_LOGI(TAG, "✅ DLT645 relay trip pulse sent (own grid feed protection)");
                 } else {
                     ESP_LOGE(TAG, "❌ DLT645 relay trip sensor not configured!");
-                }            // Return immediately - no need to check solar inverter data
+                }
+            }
+            // Rate-limited reminder: Log periodically during persistent grid feed (no relay command)
+            else if (now - this->last_grid_feed_log_time_own_ >= this->grid_feed_log_interval_) {
+                // Calculate total duration since state started (from grid_feed_start_time_own_)
+                uint32_t duration_s = (now - this->grid_feed_start_time_own_) / 1000;
+                ESP_LOGW(TAG, "⚠️ Own power grid feed ONGOING - Power: %.2f W (已持续 %lu 秒)", 
+                         own_power_w, duration_s);
+                this->last_grid_feed_log_time_own_ = now;     // Update last log time for next rate limit check
+                // NO relay command here - relay already tripped on state transition
+            }
+            
+            // Return immediately - no need to check solar inverter data
             return;
             
         } else {
-            // Power is positive or zero. No action is required, since we only close replay on solar inverter state.
-            // Empty block for clarity.
+            // Power is positive or zero. Check if we need to restore relay (transition from FEEDING to NORMAL)
+            if (this->last_grid_feed_state_own_ == GRID_FEED_STATE_FEEDING) {
+                ESP_LOGI(TAG, "✅ Own power grid feed RESOLVED - Power back to normal: %.2f W", own_power_w);
+                this->last_grid_feed_state_own_ = GRID_FEED_STATE_NORMAL;
+                
+                // Send relay close command ONLY on state transition from FEEDING to NORMAL
+                if (this->dlt645_relay_close_sensor_ != nullptr) {
+                    // CRITICAL: Use pulse mode (false -> true) to trigger on_state event
+                    this->dlt645_relay_close_sensor_->publish_state(false);
+                    this->dlt645_relay_close_sensor_->publish_state(true);
+                    this->last_relay_close_time_ = now;  // Track for logging purposes only
+                    
+                    ESP_LOGI(TAG, "✅ DLT645 relay close pulse sent (own grid feed resolved)");
+                } else {
+                    ESP_LOGW(TAG, "⚠️ DLT645 relay close sensor not configured - cannot auto-restore grid connection");
+                }
+            }
         }
     } else {
         ESP_LOGV(TAG, "⚠️ Own device state not available - cannot check for grid feed");
@@ -1258,45 +1273,48 @@ void PowerSyncComponent::strategy_inverter_ac_input_()
             ESP_LOGV(TAG, "🌞 Solar inverter detected - Power: %.2f W (data age: %lu ms)", 
                      solar_state->power, solar_state->data_age_ms);
             
-            // Check if solar power is negative (reverse power flow from solar)
+            // Check if solar power is negative (feeding to grid from solar inverter)
+            // Note: Negative power means solar is feeding power back to grid
+            //       Zero or positive power means no solar activity (night/cloudy) or consuming
             if (solar_state->power < 0.0f) {
-                // Solar grid feed detected!
+                // Solar grid feed detected! (power < 0 means feeding to grid)
                 
-                // Edge-triggered logging: Only log on state transition (normal/invalid → grid feed)
+                // Edge-triggered logging AND relay control: Only act on state transition
                 if (this->last_grid_feed_state_solar_ != GRID_FEED_STATE_FEEDING) {
-                    ESP_LOGW(TAG, "⚠️ CRITICAL: Solar inverter grid feed STARTED - Power: %.2f W", solar_state->power);
+                    ESP_LOGW(TAG, "⚠️ CRITICAL: Solar inverter grid feed STARTED - Power: %.2f W (negative = feeding)", solar_state->power);
                     this->last_grid_feed_state_solar_ = GRID_FEED_STATE_FEEDING;
                     this->grid_feed_start_time_solar_ = now;      // Record state start time
                     this->last_grid_feed_log_time_solar_ = now;   // Initialize last log time
+                    
+                    // Send relay trip command ONLY on state transition to FEEDING
+                    if (this->dlt645_relay_trip_sensor_ != nullptr) {
+                        // CRITICAL: Use pulse mode (false -> true) to trigger on_state event
+                        this->dlt645_relay_trip_sensor_->publish_state(false);
+                        this->dlt645_relay_trip_sensor_->publish_state(true);
+                        this->last_relay_trip_time_ = now;  // Track for logging purposes only
+                        
+                        ESP_LOGI(TAG, "✅ DLT645 relay trip pulse sent (solar grid feed protection)");
+                    } else {
+                        ESP_LOGE(TAG, "❌ DLT645 relay trip sensor not configured!");
+                    }
                 }
-                // Rate-limited reminder: Log periodically during persistent grid feed
+                // Rate-limited reminder: Log periodically during persistent grid feed (no relay command)
                 else if (now - this->last_grid_feed_log_time_solar_ >= this->grid_feed_log_interval_) {
                     // Calculate total duration since state started (from grid_feed_start_time_solar_)
                     uint32_t duration_s = (now - this->grid_feed_start_time_solar_) / 1000;
                     ESP_LOGW(TAG, "⚠️ Solar inverter grid feed ONGOING - Power: %.2f W (已持续 %lu 秒)", 
                              solar_state->power, duration_s);
                     this->last_grid_feed_log_time_solar_ = now;   // Update last log time for next rate limit check
-                }
-                
-                // Send relay trip command (no rate limit on state change)
-                if (this->dlt645_relay_trip_sensor_ != nullptr) {
-                    // CRITICAL: Use pulse mode (false -> true) to trigger on_state event
-                    this->dlt645_relay_trip_sensor_->publish_state(false);
-                    this->dlt645_relay_trip_sensor_->publish_state(true);
-                    this->last_relay_trip_time_ = now;  // Track for logging purposes only
-                    
-                    ESP_LOGI(TAG, "✅ DLT645 relay trip pulse sent (solar grid feed protection)");
-                } else {
-                    ESP_LOGE(TAG, "❌ DLT645 relay trip sensor not configured!");
+                    // NO relay command here - relay already tripped on state transition
                 }
                 
             } else {
-                // Solar power is positive (normal production)
+                // Solar power is zero or positive (no solar activity or not feeding to grid)
                 
                 // Edge-triggered logging: Log state transition (grid feed/invalid → normal)
                 if (this->last_grid_feed_state_solar_ == GRID_FEED_STATE_FEEDING) {
                     // Transition from GRID_FEED to NORMAL - relay was tripped, now restore
-                    ESP_LOGI(TAG, "✅ Solar inverter grid feed RESOLVED - Power back to normal: %.2f W", solar_state->power);
+                    ESP_LOGI(TAG, "✅ Solar inverter grid feed RESOLVED - Power back to normal: %.2f W (no feeding)", solar_state->power);
                     this->last_grid_feed_state_solar_ = GRID_FEED_STATE_NORMAL;
                     
                     // Send relay close command (no rate limit on state change)
@@ -1311,9 +1329,9 @@ void PowerSyncComponent::strategy_inverter_ac_input_()
                         ESP_LOGW(TAG, "⚠️ DLT645 relay close sensor not configured - cannot auto-restore grid connection");
                     }
                 } else if (this->last_grid_feed_state_solar_ == GRID_FEED_STATE_INVALID) {
-                    // First time detection with normal power - CRITICAL: Need to sync relay state
+                    // First time detection with no solar activity - CRITICAL: Need to sync relay state
                     // We don't know the relay's actual state, so we proactively send close command
-                    ESP_LOGI(TAG, "✅ Solar inverter state initialized - Normal production: %.2f W", solar_state->power);
+                    ESP_LOGI(TAG, "✅ Solar inverter state initialized - No solar activity: %.2f W", solar_state->power);
                     ESP_LOGI(TAG, "🔄 Syncing relay state on first detection (sending close command to ensure connection)");
                     this->last_grid_feed_state_solar_ = GRID_FEED_STATE_NORMAL;
                     
@@ -1334,7 +1352,7 @@ void PowerSyncComponent::strategy_inverter_ac_input_()
                     ESP_LOGV(TAG, "ℹ️ Solar power remains normal: %.2f W (no relay action needed)", solar_state->power);
                 }
                 
-                ESP_LOGV(TAG, "✅ Solar power is positive (normal production): %.2f W", solar_state->power);
+                ESP_LOGV(TAG, "✅ Solar power is zero or positive (no solar feeding): %.2f W", solar_state->power);
             }
         } else {
             ESP_LOGW(TAG, "⚠️ Solar inverter data is stale (age: %lu ms, timeout: %lu ms) - Skipping power decision",
