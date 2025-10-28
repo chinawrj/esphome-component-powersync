@@ -5,6 +5,7 @@ from esphome.const import (
     CONF_ID,
     CONF_CHANNEL,
     CONF_UPDATE_INTERVAL,
+    CONF_TRIGGER_ID,
     DEVICE_CLASS_VOLTAGE,
     DEVICE_CLASS_CURRENT,
     DEVICE_CLASS_FREQUENCY,
@@ -15,6 +16,7 @@ from esphome.const import (
     UNIT_HERTZ,
     UNIT_WATT,
 )
+from esphome import automation
 
 DEPENDENCIES = ["wifi", "esp32"]
 CODEOWNERS = ["@chinawrj"]
@@ -22,12 +24,20 @@ CODEOWNERS = ["@chinawrj"]
 powersync_ns = cg.esphome_ns.namespace("powersync")
 PowerSyncComponent = powersync_ns.class_("PowerSyncComponent", cg.Component)
 
+# Trigger for inverter output power adjustment needed event
+InverterOutputPowerAdjustmentTrigger = powersync_ns.class_(
+    "InverterOutputPowerAdjustmentTrigger", automation.Trigger.template(cg.float_)
+)
+
 CONF_BROADCAST_INTERVAL = "broadcast_interval"
 CONF_SYSTEM_UPDATE_INTERVAL = "system_update_interval"
 CONF_AUTO_ADD_PEER = "auto_add_peer"
 CONF_FIRMWARE_VERSION = "firmware_version"
 CONF_POWER_DECISION_DATA_TIMEOUT = "power_decision_data_timeout"
 CONF_POWER_CHANGE_THRESHOLD = "power_change_threshold"
+CONF_INVERTER_OUTPUT_POWER_RANGE_MIN = "inverter_output_power_range_min"
+CONF_INVERTER_OUTPUT_POWER_RANGE_MAX = "inverter_output_power_range_max"
+CONF_ON_INVERTER_OUTPUT_POWER_ADJUSTMENT = "on_inverter_output_power_adjustment"
 
 # TLV sensor configuration
 CONF_AC_VOLTAGE_SENSOR = "ac_voltage_sensor"
@@ -65,6 +75,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_SYSTEM_UPDATE_INTERVAL, default="100ms"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_POWER_DECISION_DATA_TIMEOUT, default="60s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_POWER_CHANGE_THRESHOLD, default=100.0): cv.float_range(min=0.0),
+        cv.Optional(CONF_INVERTER_OUTPUT_POWER_RANGE_MIN, default=-150.0): cv.float_,
+        cv.Optional(CONF_INVERTER_OUTPUT_POWER_RANGE_MAX, default=150.0): cv.float_,
         cv.Required(CONF_FIRMWARE_VERSION): cv.string_strict,
         cv.Optional(CONF_AC_VOLTAGE_SENSOR): sensor.sensor_schema(
             device_class=DEVICE_CLASS_VOLTAGE,
@@ -104,6 +116,11 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_DEVICE_ROLE, default="UNKNOWN"): cv.enum(DEVICE_ROLES, upper=True),
         cv.Optional(CONF_DLT645_RELAY_TRIP_SENSOR): cv.use_id(binary_sensor.BinarySensor),
         cv.Optional(CONF_DLT645_RELAY_CLOSE_SENSOR): cv.use_id(binary_sensor.BinarySensor),
+        cv.Optional(CONF_ON_INVERTER_OUTPUT_POWER_ADJUSTMENT): automation.validate_automation(
+            {
+                cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(InverterOutputPowerAdjustmentTrigger),
+            }
+        ),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -119,6 +136,8 @@ async def to_code(config):
     cg.add(var.set_system_update_interval(config[CONF_SYSTEM_UPDATE_INTERVAL]))
     cg.add(var.set_power_decision_data_timeout(config[CONF_POWER_DECISION_DATA_TIMEOUT]))
     cg.add(var.set_power_change_threshold(config[CONF_POWER_CHANGE_THRESHOLD]))
+    cg.add(var.set_inverter_output_power_range_min(config[CONF_INVERTER_OUTPUT_POWER_RANGE_MIN]))
+    cg.add(var.set_inverter_output_power_range_max(config[CONF_INVERTER_OUTPUT_POWER_RANGE_MAX]))
     cg.add(var.set_firmware_version(config[CONF_FIRMWARE_VERSION]))
     cg.add(var.set_device_role(config[CONF_DEVICE_ROLE]))
 
@@ -155,6 +174,11 @@ async def to_code(config):
     if CONF_DLT645_RELAY_CLOSE_SENSOR in config:
         sens = await cg.get_variable(config[CONF_DLT645_RELAY_CLOSE_SENSOR])
         cg.add(var.set_dlt645_relay_close_sensor(sens))
+    
+    # Configure inverter output power adjustment trigger
+    for conf in config.get(CONF_ON_INVERTER_OUTPUT_POWER_ADJUSTMENT, []):
+        trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
+        await automation.build_automation(trigger, [(cg.float_, "power_gap_watts")], conf)
 
     # Add ESP-NOW dependency
     cg.add_library("ESP-NOW", None)

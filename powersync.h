@@ -134,6 +134,8 @@ class PowerSyncComponent : public Component {
   void set_power_change_threshold(float threshold) { power_change_threshold_w_ = threshold; }
   void set_firmware_version(const std::string &version) { firmware_version_ = version; }
   void set_device_role(DeviceRole role) { device_role_ = role; }
+  void set_inverter_output_power_range_min(float min) { inverter_output_power_range_min_w_ = min; }
+  void set_inverter_output_power_range_max(float max) { inverter_output_power_range_max_w_ = max; }
 
   // Optional sensor setters
   void set_ac_voltage_sensor(esphome::sensor::Sensor *sensor) { ac_voltage_sensor_ = sensor; }
@@ -165,6 +167,11 @@ class PowerSyncComponent : public Component {
   const DeviceState* get_device_state(DeviceRole role) const;
   bool is_device_active(DeviceRole role) const;
   void clear_inactive_devices();  // Remove devices that haven't updated recently
+  
+  // Callback registration for inverter output power adjustment needed event
+  void add_on_inverter_output_power_adjustment_callback(std::function<void(float)>&& callback) {
+    this->inverter_output_power_adjustment_callback_.add(std::move(callback));
+  }
 
  protected:
   // Configuration
@@ -174,6 +181,8 @@ class PowerSyncComponent : public Component {
   uint32_t system_update_interval_ = 100;  // 100ms
   uint32_t power_decision_data_timeout_ = 60000;  // 60 seconds (default)
   float power_change_threshold_w_ = 100.0f;  // 100W power change threshold (default)
+  float inverter_output_power_range_min_w_ = -150.0f;  // -150W minimum power range (default)
+  float inverter_output_power_range_max_w_ = 150.0f;   // +150W maximum power range (default)
 
   // Optional sensors
   sensor::Sensor *ac_voltage_sensor_ = nullptr;
@@ -315,6 +324,22 @@ class PowerSyncComponent : public Component {
   
   // TLV parsing callback (static function for use with tlv_parse_stream)
   static bool tlv_parse_callback_(uint8_t type, uint8_t length, const uint8_t* value, void* user_data);
+  
+  // Callback managers for events
+  CallbackManager<void(float)> inverter_output_power_adjustment_callback_;  // Inverter output power adjustment needed (power_gap_w)
+  
+  // State tracking for power range adjustment
+  bool last_inverter_output_out_of_range_ = false;  // Track if power was out of range in last check
+  uint32_t last_inverter_output_adjustment_log_time_ = 0;  // Last log time for rate limiting
+};
+
+// Trigger class for inverter output power adjustment needed event
+class InverterOutputPowerAdjustmentTrigger : public Trigger<float> {
+ public:
+  explicit InverterOutputPowerAdjustmentTrigger(PowerSyncComponent *parent) {
+    parent->add_on_inverter_output_power_adjustment_callback(
+        [this](float power_gap_watts) { this->trigger(power_gap_watts); });
+  }
 };
 
 }  // namespace powersync

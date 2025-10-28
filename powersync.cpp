@@ -19,10 +19,10 @@ namespace esphome
 namespace powersync
 {
 
-// Grid feed state constants (三态逻辑)
-static constexpr int8_t GRID_FEED_STATE_INVALID = -1;  // 初始状态（未知）
-static constexpr int8_t GRID_FEED_STATE_NORMAL = 0;    // 正常状态（功率>=0）
-static constexpr int8_t GRID_FEED_STATE_FEEDING = 1;   // 逆功率状态（功率<0）
+// Grid feed state constants (three-state logic)
+static constexpr int8_t GRID_FEED_STATE_INVALID = -1;  // Initial state (unknown)
+static constexpr int8_t GRID_FEED_STATE_NORMAL = 0;    // Normal state (power >= 0)
+static constexpr int8_t GRID_FEED_STATE_FEEDING = 1;   // Reverse power state (power < 0)
 
 PowerSyncComponent *PowerSyncComponent::instance_ = nullptr;
 
@@ -1428,13 +1428,115 @@ void PowerSyncComponent::strategy_sinker_dc_vehicle_charger_()
 
 void PowerSyncComponent::strategy_solar_inverter_output_total_()
 {
-    // Strategy: Monitor solar inverter output
+    // Strategy: Monitor INVERTER_AC_OUTPUT power to maintain it within configured range
+    // Purpose: Adjust solar generation to keep inverter output power within [-min, +max] range
+    // Use case: Balance solar generation with load demand to prevent grid feed or power shortage
     // State duration tracking is now handled by the generic update_state_duration_() method
+    // 
+    // Performance optimizations:
+    // - Rate-limited logging for normal state (every 30s)
+    // - Rate-limited event triggering for out-of-range state (every 5s)
     
-    ESP_LOGV(TAG, "🌞 Executing SOLOAR_INVERTER_OUTPUT_TOTAL strategy");
+    uint32_t now = millis();
     
-    // Additional solar-specific logic can be added here if needed
-    // For now, this strategy just relies on the common state duration tracking
+
+    // Get INVERTER_AC_OUTPUT device state (grid inverter AC output)
+    const DeviceState* inverter_output_state = this->get_device_state(ROLE_INVERTER_AC_OUTPUT);
+    
+    if (inverter_output_state == nullptr) {
+        return;
+    }
+    
+    // Check if data is fresh (within configured timeout)
+    if (inverter_output_state->data_age_ms > this->power_decision_data_timeout_) {
+        return;
+    }
+    
+    // Get current power from inverter AC output
+    float inverter_output_power = inverter_output_state->power;
+    
+    // Calculate power gap based on range
+    // Power gap logic:
+    // - If power > max: need to REDUCE solar generation (gap = power - max, positive value)
+    // - If power < min: need to INCREASE solar generation (gap = power - min, negative value)
+    // - If within range: gap = 0, no adjustment needed
+    
+    float power_gap = 0.0f;
+    bool out_of_range = false;
+    
+    if (inverter_output_power > this->inverter_output_power_range_max_w_) {
+        // Output power too high - need to reduce solar generation
+        // Example: output=200W, max=150W → gap=50W (need to reduce solar by 50W)
+        power_gap = inverter_output_power - this->inverter_output_power_range_max_w_;
+        out_of_range = true;
+    } else if (inverter_output_power < this->inverter_output_power_range_min_w_) {
+        // Output power too low (or negative, feeding to grid) - need to increase solar generation
+        // Example: output=-200W, min=-150W → gap=-50W (need to increase solar by 50W)
+        power_gap = inverter_output_power - this->inverter_output_power_range_min_w_;
+        out_of_range = true;
+    }
+    
+    if (out_of_range) {
+        // Power is out of range - adjustment needed
+        
+        // Edge-triggered logging: Only log on state transition (in range → out of range)
+        if (!this->last_inverter_output_out_of_range_) {
+            ESP_LOGW(TAG, "⚡ Inverter AC output power OUT OF RANGE!");
+            ESP_LOGW(TAG, "   Current output: %.2f W", inverter_output_power);
+            ESP_LOGW(TAG, "   Configured range: [%.2f, %.2f] W", 
+                     this->inverter_output_power_range_min_w_, 
+                     this->inverter_output_power_range_max_w_);
+            ESP_LOGW(TAG, "   Power gap: %.2f W", power_gap);
+            
+            if (power_gap > 0) {
+                ESP_LOGW(TAG, "   → Need to REDUCE solar generation by %.2f W", power_gap);
+            } else {
+                ESP_LOGW(TAG, "   → Need to INCREASE solar generation by %.2f W", std::abs(power_gap));
+            }
+            
+            // Trigger event immediately on state transition
+            this->inverter_output_power_adjustment_callback_.call(power_gap);
+            
+            // Update state
+            this->last_inverter_output_out_of_range_ = true;
+            this->last_inverter_output_adjustment_log_time_ = now;
+        } else {
+            // Rate-limited event triggering and logging (every 5 seconds during persistent out-of-range)
+            if (now - this->last_inverter_output_adjustment_log_time_ >= 5000) {
+                ESP_LOGW(TAG, "⚠️ Still out of range - Output: %.2f W, Gap: %.2f W",
+                         inverter_output_power, power_gap);
+                
+                // Trigger event again (rate-limited to every 5 seconds)
+                this->inverter_output_power_adjustment_callback_.call(power_gap);
+                
+                this->last_inverter_output_adjustment_log_time_ = now;
+            }
+        }
+    } else {
+        // Power is within range - no adjustment needed
+        
+        // Edge-triggered logging: Log state transition (out of range → in range)
+        if (this->last_inverter_output_out_of_range_) {
+            ESP_LOGI(TAG, "✅ Inverter AC output power returned to normal range");
+            ESP_LOGI(TAG, "   Current output: %.2f W", inverter_output_power);
+            ESP_LOGI(TAG, "   Configured range: [%.2f, %.2f] W",
+                     this->inverter_output_power_range_min_w_,
+                     this->inverter_output_power_range_max_w_);
+            
+            // Update state
+            this->last_inverter_output_out_of_range_ = false;
+        }
+        
+        // Rate-limited verbose logging for normal state (every 30 seconds)
+        static uint32_t last_in_range_log_time = 0;
+        if (now - last_in_range_log_time >= 30000) {
+            ESP_LOGI(TAG, "✅ Inverter AC output power within range: %.2f W (range: [%.2f, %.2f] W)",
+                     inverter_output_power, 
+                     this->inverter_output_power_range_min_w_,
+                     this->inverter_output_power_range_max_w_);
+            last_in_range_log_time = now;
+        }
+    }
 }
 
 // ============================================================================
