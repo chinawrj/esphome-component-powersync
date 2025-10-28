@@ -1233,30 +1233,12 @@ void PowerSyncComponent::strategy_inverter_ac_input_()
                 this->last_grid_feed_log_time_own_ = now;     // Update last log time for next rate limit check
                 // NO relay command here - relay already tripped on state transition
             }
-            
             // Return immediately - no need to check solar inverter data
             return;
             
         } else {
-            // Power is positive or zero. Check if we need to restore relay (transition from FEEDING to NORMAL)
-            if (this->last_grid_feed_state_own_ == GRID_FEED_STATE_FEEDING) {
-                ESP_LOGI(TAG, "✅ Own power grid feed RESOLVED - Power back to normal: %.2f W", own_power_w);
-                this->last_grid_feed_state_own_ = GRID_FEED_STATE_NORMAL;
-                
-                // Send relay close command ONLY on state transition from FEEDING to NORMAL
-                if (this->dlt645_relay_close_sensor_ != nullptr) {
-                    // CRITICAL: Use pulse mode (false -> true) to trigger on_state event
-                    this->dlt645_relay_close_sensor_->publish_state(false);
-                    this->dlt645_relay_close_sensor_->publish_state(true);
-                    this->last_relay_close_time_ = now;  // Track for logging purposes only
-                    
-                    ESP_LOGI(TAG, "✅ DLT645 relay close pulse sent (own grid feed resolved)");
-                } else {
-                    ESP_LOGW(TAG, "⚠️ DLT645 relay close sensor not configured - cannot auto-restore grid connection");
-                }
-                // Return immediately after handling state transition, we may handle the data from soloar inverter next cycle
-                return;
-            }
+            // Power is positive or zero
+            // no action needed. We may choose to close relay, but we will do it in the solar check below.
         }
     } else {
         ESP_LOGV(TAG, "⚠️ Own device state not available - cannot check for grid feed");
@@ -1359,6 +1341,21 @@ void PowerSyncComponent::strategy_inverter_ac_input_()
         } else {
             ESP_LOGW(TAG, "⚠️ Solar inverter data is stale (age: %lu ms, timeout: %lu ms) - Skipping power decision",
                      solar_state->data_age_ms, this->power_decision_data_timeout_);
+            // we should trip the relay, in case we has totally lost power after inverter output
+            if (this->last_grid_feed_state_solar_ == GRID_FEED_STATE_FEEDING) {
+                ESP_LOGW(TAG, "⚠️ Solar inverter data stale during grid feed - Ensuring relay is tripped for safety");
+                // Send relay trip command
+                if (this->dlt645_relay_trip_sensor_ != nullptr) {
+                    // CRITICAL: Use pulse mode (false -> true) to trigger on_state event
+                    this->dlt645_relay_trip_sensor_->publish_state(false);
+                    this->dlt645_relay_trip_sensor_->publish_state(true);
+                    this->last_relay_trip_time_ = now;  // Track for logging purposes only
+                    
+                    ESP_LOGI(TAG, "✅ DLT645 relay trip pulse sent (solar data stale during grid feed)");
+                } else {
+                    ESP_LOGE(TAG, "❌ DLT645 relay trip sensor not configured!");
+                }
+            }
         }
     } else {
         ESP_LOGV(TAG, "ℹ️ Solar inverter data not available or expired");
