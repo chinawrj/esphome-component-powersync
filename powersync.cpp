@@ -1457,21 +1457,21 @@ void PowerSyncComponent::strategy_solar_inverter_output_total_()
     
     // Calculate power gap based on range
     // Power gap logic:
-    // - If power > max: need to REDUCE solar generation (gap = power - max, positive value)
-    // - If power < min: need to INCREASE solar generation (gap = power - min, negative value)
+    // - If power > max: need to INCREASE solar generation (gap = power - max, positive value)
+    // - If power < min: need to DECREASE solar generation (gap = power - min, negative value)
     // - If within range: gap = 0, no adjustment needed
     
     float power_gap = 0.0f;
     bool out_of_range = false;
     
     if (inverter_output_power > this->inverter_output_power_range_max_w_) {
-        // Output power too high - need to reduce solar generation
-        // Example: output=200W, max=150W → gap=50W (need to reduce solar by 50W)
+        // Output power too high - need to increase solar generation
+        // Example: output=200W (taking from grid), max=150W → gap=50W (need to increase solar by 50W)
         power_gap = inverter_output_power - this->inverter_output_power_range_max_w_;
         out_of_range = true;
     } else if (inverter_output_power < this->inverter_output_power_range_min_w_) {
-        // Output power too low (or negative, feeding to grid) - need to increase solar generation
-        // Example: output=-200W, min=-150W → gap=-50W (need to increase solar by 50W)
+        // Output power too low (or negative, feeding to grid) - need to decrease solar generation
+        // Example: output=-200W (feeding to grid), min=-150W → gap=-50W (need to decrease solar by 50W)
         power_gap = inverter_output_power - this->inverter_output_power_range_min_w_;
         out_of_range = true;
     }
@@ -1489,9 +1489,9 @@ void PowerSyncComponent::strategy_solar_inverter_output_total_()
             ESP_LOGW(TAG, "   Power gap: %.2f W", power_gap);
             
             if (power_gap > 0) {
-                ESP_LOGW(TAG, "   → Need to REDUCE solar generation by %.2f W", power_gap);
+                ESP_LOGW(TAG, "   → Need to INCREASE solar generation by %.2f W", power_gap);
             } else {
-                ESP_LOGW(TAG, "   → Need to INCREASE solar generation by %.2f W", std::abs(power_gap));
+                ESP_LOGW(TAG, "   → Need to DECREASE solar generation by %.2f W", std::abs(power_gap));
             }
             
             // Trigger event immediately on state transition
