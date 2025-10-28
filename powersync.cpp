@@ -1254,6 +1254,8 @@ void PowerSyncComponent::strategy_inverter_ac_input_()
                 } else {
                     ESP_LOGW(TAG, "⚠️ DLT645 relay close sensor not configured - cannot auto-restore grid connection");
                 }
+                // Return immediately after handling state transition, we may handle the data from soloar inverter next cycle
+                return;
             }
         }
     } else {
