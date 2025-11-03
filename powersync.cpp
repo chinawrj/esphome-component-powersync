@@ -1260,7 +1260,9 @@ void PowerSyncComponent::strategy_inverter_ac_input_()
             // Check if solar power is negative (feeding to grid from solar inverter)
             // Note: Negative power means solar is feeding power back to grid
             //       Zero or positive power means no solar activity (night/cloudy) or consuming
-            if (solar_state->power < 0.0f) {
+            // To optimize the case that when the sun has just risen, the solar power may be still low
+            // and unstable, we need to set a small threshold (configurable via solar_power_threshold) to avoid false triggering.
+            if (solar_state->power < this->solar_power_threshold_w_) {
                 // Solar grid feed detected! (power < 0 means feeding to grid)
                 
                 // Edge-triggered logging AND relay control: Only act on state transition

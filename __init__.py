@@ -35,6 +35,7 @@ CONF_AUTO_ADD_PEER = "auto_add_peer"
 CONF_FIRMWARE_VERSION = "firmware_version"
 CONF_POWER_DECISION_DATA_TIMEOUT = "power_decision_data_timeout"
 CONF_POWER_CHANGE_THRESHOLD = "power_change_threshold"
+CONF_SOLAR_POWER_THRESHOLD = "solar_power_threshold"
 CONF_INVERTER_OUTPUT_POWER_RANGE_MIN = "inverter_output_power_range_min"
 CONF_INVERTER_OUTPUT_POWER_RANGE_MAX = "inverter_output_power_range_max"
 CONF_ON_INVERTER_OUTPUT_POWER_ADJUSTMENT = "on_inverter_output_power_adjustment"
@@ -75,6 +76,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_SYSTEM_UPDATE_INTERVAL, default="100ms"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_POWER_DECISION_DATA_TIMEOUT, default="60s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_POWER_CHANGE_THRESHOLD, default=100.0): cv.float_range(min=0.0),
+        cv.Optional(CONF_SOLAR_POWER_THRESHOLD, default=-10.0): cv.float_,
         cv.Optional(CONF_INVERTER_OUTPUT_POWER_RANGE_MIN, default=-150.0): cv.float_,
         cv.Optional(CONF_INVERTER_OUTPUT_POWER_RANGE_MAX, default=150.0): cv.float_,
         cv.Required(CONF_FIRMWARE_VERSION): cv.string_strict,
@@ -136,6 +138,7 @@ async def to_code(config):
     cg.add(var.set_system_update_interval(config[CONF_SYSTEM_UPDATE_INTERVAL]))
     cg.add(var.set_power_decision_data_timeout(config[CONF_POWER_DECISION_DATA_TIMEOUT]))
     cg.add(var.set_power_change_threshold(config[CONF_POWER_CHANGE_THRESHOLD]))
+    cg.add(var.set_solar_power_threshold(config[CONF_SOLAR_POWER_THRESHOLD]))
     cg.add(var.set_inverter_output_power_range_min(config[CONF_INVERTER_OUTPUT_POWER_RANGE_MIN]))
     cg.add(var.set_inverter_output_power_range_max(config[CONF_INVERTER_OUTPUT_POWER_RANGE_MAX]))
     cg.add(var.set_firmware_version(config[CONF_FIRMWARE_VERSION]))
