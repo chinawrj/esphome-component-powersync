@@ -1246,8 +1246,15 @@ void PowerSyncComponent::strategy_inverter_ac_input_()
     
     // ========================================================================
     // Priority 2: Check solar inverter output for reverse power
-    // (Only executed if own power is not negative)
+    // (Only executed if own power is not negative AND if enabled in configuration)
     // ========================================================================
+    
+    // Skip solar inverter check if disabled in YAML configuration
+    if (!this->check_solar_inverter_power_) {
+        ESP_LOGV(TAG, "ℹ️ Solar inverter power check disabled in configuration - skipping");
+        return;
+    }
+    
     const DeviceState* solar_state = this->get_device_state(ROLE_SOLOAR_INVERTER_OUTPUT_TOTAL);
     
     if (solar_state != nullptr) {

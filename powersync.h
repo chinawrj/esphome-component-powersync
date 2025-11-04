@@ -133,6 +133,7 @@ class PowerSyncComponent : public Component {
   void set_power_decision_data_timeout(uint32_t timeout) { power_decision_data_timeout_ = timeout; }
   void set_power_change_threshold(float threshold) { power_change_threshold_w_ = threshold; }
   void set_solar_power_threshold(float threshold) { solar_power_threshold_w_ = threshold; }
+  void set_check_solar_inverter_power(bool check) { check_solar_inverter_power_ = check; }
   void set_firmware_version(const std::string &version) { firmware_version_ = version; }
   void set_device_role(DeviceRole role) { device_role_ = role; }
   void set_inverter_output_power_range_min(float min) { inverter_output_power_range_min_w_ = min; }
@@ -164,6 +165,9 @@ class PowerSyncComponent : public Component {
   void trigger_broadcast();
   void send_tlv_command();
   
+  // Runtime configuration methods
+  void update_check_solar_inverter_power(bool check) { this->check_solar_inverter_power_ = check; }
+  
   // Device state management methods
   const DeviceState* get_device_state(DeviceRole role) const;
   bool is_device_active(DeviceRole role) const;
@@ -183,6 +187,7 @@ class PowerSyncComponent : public Component {
   uint32_t power_decision_data_timeout_ = 60000;  // 60 seconds (default)
   float power_change_threshold_w_ = 100.0f;  // 100W power change threshold (default)
   float solar_power_threshold_w_ = -10.0f;  // Solar power threshold for grid feed detection (default -10.0W)
+  bool check_solar_inverter_power_ = false;  // Whether to check solar inverter power (default: false)
   float inverter_output_power_range_min_w_ = -150.0f;  // -150W minimum power range (default)
   float inverter_output_power_range_max_w_ = 150.0f;   // +150W maximum power range (default)
 
