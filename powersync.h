@@ -134,6 +134,8 @@ class PowerSyncComponent : public Component {
   void set_power_change_threshold(float threshold) { power_change_threshold_w_ = threshold; }
   void set_solar_power_threshold(float threshold) { solar_power_threshold_w_ = threshold; }
   void set_check_solar_inverter_power(bool check) { check_solar_inverter_power_ = check; }
+  void set_enable_inverter_ac_input_strategy(bool enable) { enable_inverter_ac_input_strategy_ = enable; }
+  void set_low_power_restore_threshold(float threshold) { low_power_restore_threshold_w_ = threshold; }
   void set_firmware_version(const std::string &version) { firmware_version_ = version; }
   void set_device_role(DeviceRole role) { device_role_ = role; }
   void set_inverter_output_power_range_min(float min) { inverter_output_power_range_min_w_ = min; }
@@ -188,6 +190,8 @@ class PowerSyncComponent : public Component {
   float power_change_threshold_w_ = 100.0f;  // 100W power change threshold (default)
   float solar_power_threshold_w_ = -10.0f;  // Solar power threshold for grid feed detection (default -10.0W)
   bool check_solar_inverter_power_ = false;  // Whether to check solar inverter power (default: false)
+  bool enable_inverter_ac_input_strategy_ = true;  // Whether to enable inverter AC input strategy (default: true)
+  float low_power_restore_threshold_w_ = 1.0f;  // Low power threshold for relay restore (default: 1.0W)
   float inverter_output_power_range_min_w_ = -150.0f;  // -150W minimum power range (default)
   float inverter_output_power_range_max_w_ = 150.0f;   // +150W maximum power range (default)
 
@@ -210,10 +214,13 @@ class PowerSyncComponent : public Component {
   // State values: -1=INVALID (unknown/初始状态), 0=NORMAL (正常), 1=GRID_FEED (逆功率)
   int8_t last_grid_feed_state_own_ = -1;         // Own power grid feed state: -1=invalid, 0=normal, 1=grid_feed
   int8_t last_grid_feed_state_solar_ = -1;       // Solar inverter grid feed state: -1=invalid, 0=normal, 1=grid_feed
+  int8_t last_low_power_state_ = -1;             // Low power restore state: -1=invalid, 0=normal, 1=low_power (Priority 3)
   uint32_t grid_feed_start_time_own_ = 0;        // State start time for own grid feed (for duration calculation)
   uint32_t grid_feed_start_time_solar_ = 0;      // State start time for solar grid feed (for duration calculation)
+  uint32_t low_power_start_time_ = 0;            // State start time for low power detection (Priority 3)
   uint32_t last_grid_feed_log_time_own_ = 0;     // Last log time for own grid feed (for rate limiting)
   uint32_t last_grid_feed_log_time_solar_ = 0;   // Last log time for solar grid feed (for rate limiting)
+  uint32_t last_low_power_log_time_ = 0;         // Last log time for low power state (Priority 3)
   uint32_t last_relay_trip_time_ = 0;            // Last relay trip command time
   uint32_t last_relay_close_time_ = 0;           // Last relay close command time
   uint32_t grid_feed_log_interval_ = 5000;       // Rate limit: log every 5 seconds

@@ -1183,6 +1183,7 @@ void PowerSyncComponent::strategy_inverter_ac_input_()
     // Strategy: Monitor own power for reverse feed (grid feed)
     // Priority 1: Check own power first - if negative (reverse feed), immediately disconnect relay
     // Priority 2: If own power is positive or zero, then monitor solar inverter for coordination
+    // Priority 3: If both solar and inverter output are low/invalid, restore grid connection
     // 
     // Protection Features:
     // - Edge-triggered logging: Log only on state change (normal ↔ grid feed)
@@ -1190,6 +1191,12 @@ void PowerSyncComponent::strategy_inverter_ac_input_()
     // - Rate-limited reminders: Periodic logs during persistent grid feed (every 5s)
     
     ESP_LOGV(TAG, "🔌 Executing INVERTER_AC_INPUT strategy");
+    
+    // Check if strategy is enabled in YAML configuration
+    if (!this->enable_inverter_ac_input_strategy_) {
+        ESP_LOGV(TAG, "ℹ️ Inverter AC input strategy disabled in configuration - skipping");
+        return;
+    }
     
     uint32_t now = millis();
     
@@ -1350,6 +1357,10 @@ void PowerSyncComponent::strategy_inverter_ac_input_()
         } else {
             ESP_LOGW(TAG, "⚠️ Solar inverter data is stale (age: %lu ms, timeout: %lu ms) - Skipping power decision",
                      solar_state->data_age_ms, this->power_decision_data_timeout_);
+            // COMMENTED OUT: Safety protection when solar data is stale during grid feed
+            // This logic was too aggressive - tripping relay when solar data expires
+            // even if own power is normal. Keeping it disabled for now.
+            /*
             // we should trip the relay, in case we has totally lost power after inverter output
             if (this->last_grid_feed_state_solar_ == GRID_FEED_STATE_FEEDING) {
                 ESP_LOGW(TAG, "⚠️ Solar inverter data stale during grid feed - Ensuring relay is tripped for safety");
@@ -1365,9 +1376,105 @@ void PowerSyncComponent::strategy_inverter_ac_input_()
                     ESP_LOGE(TAG, "❌ DLT645 relay trip sensor not configured!");
                 }
             }
+            */
         }
     } else {
         ESP_LOGV(TAG, "ℹ️ Solar inverter data not available or expired");
+    }
+    
+    // ========================================================================
+    // Priority 3: Check if both solar and inverter output are low/invalid
+    // (Emergency grid restore when no inverter power available)
+    // ========================================================================
+    
+    const DeviceState* solar_output_state = this->get_device_state(ROLE_SOLOAR_INVERTER_OUTPUT_TOTAL);
+    const DeviceState* inverter_output_state = this->get_device_state(ROLE_INVERTER_AC_OUTPUT);
+    
+    // Check if both solar and inverter output are low power or invalid
+    bool solar_low_or_invalid = false;
+    bool inverter_low_or_invalid = false;
+    
+    // Check solar output state
+    if (solar_output_state != nullptr && solar_output_state->data_age_ms <= this->power_decision_data_timeout_) {
+        // Solar data is fresh
+        if (fabsf(solar_output_state->power) < this->low_power_restore_threshold_w_) {
+            solar_low_or_invalid = true;
+            ESP_LOGV(TAG, "🌞 Solar output power is low: %.3f W (threshold: %.1f W)", 
+                     solar_output_state->power, this->low_power_restore_threshold_w_);
+        }
+    } else {
+        // Solar data is invalid or stale
+        solar_low_or_invalid = true;
+        ESP_LOGV(TAG, "🌞 Solar output data is invalid or stale");
+    }
+    
+    // Check inverter AC output state
+    if (inverter_output_state != nullptr && inverter_output_state->data_age_ms <= this->power_decision_data_timeout_) {
+        // Inverter data is fresh
+        if (fabsf(inverter_output_state->power) < this->low_power_restore_threshold_w_) {
+            inverter_low_or_invalid = true;
+            ESP_LOGV(TAG, "🔌 Inverter AC output power is low: %.3f W (threshold: %.1f W)", 
+                     inverter_output_state->power, this->low_power_restore_threshold_w_);
+        }
+    } else {
+        // Inverter data is invalid or stale
+        inverter_low_or_invalid = true;
+        ESP_LOGV(TAG, "🔌 Inverter AC output data is invalid or stale");
+    }
+    
+    // If BOTH are low/invalid, trigger emergency grid restore
+    if (solar_low_or_invalid && inverter_low_or_invalid) {
+        // Low power emergency detected!
+        
+        // Edge-triggered logging AND relay control: Only act on state transition
+        if (this->last_low_power_state_ != GRID_FEED_STATE_FEEDING) {  // Reuse constant for state tracking
+            ESP_LOGW(TAG, "⚠️ EMERGENCY: Both solar and inverter output are LOW/INVALID - Restoring grid connection");
+            ESP_LOGW(TAG, "   Solar: %s, Inverter: %s", 
+                     solar_output_state ? "LOW" : "INVALID",
+                     inverter_output_state ? "LOW" : "INVALID");
+            this->last_low_power_state_ = GRID_FEED_STATE_FEEDING;
+            this->low_power_start_time_ = now;
+            this->last_low_power_log_time_ = now;
+            
+            // Send relay close command ONLY on state transition
+            if (this->dlt645_relay_close_sensor_ != nullptr) {
+                // CRITICAL: Use pulse mode (false -> true) to trigger on_state event
+                this->dlt645_relay_close_sensor_->publish_state(false);
+                this->dlt645_relay_close_sensor_->publish_state(true);
+                this->last_relay_close_time_ = now;
+                
+                ESP_LOGI(TAG, "✅ DLT645 relay close pulse sent (Priority 3: emergency grid restore)");
+            } else {
+                ESP_LOGE(TAG, "❌ DLT645 relay close sensor not configured!");
+            }
+        }
+        // Rate-limited reminder: Log periodically during persistent low power state
+        else if (now - this->last_low_power_log_time_ >= this->grid_feed_log_interval_) {
+            uint32_t duration_s = (now - this->low_power_start_time_) / 1000;
+            ESP_LOGW(TAG, "⚠️ Low power state ONGOING - Solar: %s, Inverter: %s (已持续 %lu 秒)",
+                     solar_output_state ? "LOW" : "INVALID",
+                     inverter_output_state ? "LOW" : "INVALID",
+                     duration_s);
+            this->last_low_power_log_time_ = now;
+        }
+        
+    } else {
+        // At least one source has sufficient power
+        
+        // Edge-triggered logging: Log state transition (low power → normal)
+        if (this->last_low_power_state_ == GRID_FEED_STATE_FEEDING) {
+            ESP_LOGI(TAG, "✅ Low power state RESOLVED - Power sources restored");
+            ESP_LOGI(TAG, "   Solar: %.3f W, Inverter: %.3f W",
+                     solar_output_state ? solar_output_state->power : 0.0f,
+                     inverter_output_state ? inverter_output_state->power : 0.0f);
+            this->last_low_power_state_ = GRID_FEED_STATE_NORMAL;
+        } else if (this->last_low_power_state_ == -1) {
+            // First detection with normal power
+            ESP_LOGV(TAG, "ℹ️ Power sources initialized - Normal state");
+            this->last_low_power_state_ = GRID_FEED_STATE_NORMAL;
+        }
+        
+        ESP_LOGV(TAG, "✅ At least one power source is available (no emergency grid restore needed)");
     }
 }
 

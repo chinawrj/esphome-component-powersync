@@ -37,6 +37,8 @@ CONF_POWER_DECISION_DATA_TIMEOUT = "power_decision_data_timeout"
 CONF_POWER_CHANGE_THRESHOLD = "power_change_threshold"
 CONF_SOLAR_POWER_THRESHOLD = "solar_power_threshold"
 CONF_CHECK_SOLAR_INVERTER_POWER = "check_solar_inverter_power"
+CONF_ENABLE_INVERTER_AC_INPUT_STRATEGY = "enable_inverter_ac_input_strategy"
+CONF_LOW_POWER_RESTORE_THRESHOLD = "low_power_restore_threshold"
 CONF_INVERTER_OUTPUT_POWER_RANGE_MIN = "inverter_output_power_range_min"
 CONF_INVERTER_OUTPUT_POWER_RANGE_MAX = "inverter_output_power_range_max"
 CONF_ON_INVERTER_OUTPUT_POWER_ADJUSTMENT = "on_inverter_output_power_adjustment"
@@ -79,6 +81,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_POWER_CHANGE_THRESHOLD, default=100.0): cv.float_range(min=0.0),
         cv.Optional(CONF_SOLAR_POWER_THRESHOLD, default=-10.0): cv.float_,
         cv.Optional(CONF_CHECK_SOLAR_INVERTER_POWER, default=False): cv.boolean,
+        cv.Optional(CONF_ENABLE_INVERTER_AC_INPUT_STRATEGY, default=True): cv.boolean,
+        cv.Optional(CONF_LOW_POWER_RESTORE_THRESHOLD, default=1.0): cv.float_range(min=0.0),
         cv.Optional(CONF_INVERTER_OUTPUT_POWER_RANGE_MIN, default=-150.0): cv.float_,
         cv.Optional(CONF_INVERTER_OUTPUT_POWER_RANGE_MAX, default=150.0): cv.float_,
         cv.Required(CONF_FIRMWARE_VERSION): cv.string_strict,
@@ -142,6 +146,8 @@ async def to_code(config):
     cg.add(var.set_power_change_threshold(config[CONF_POWER_CHANGE_THRESHOLD]))
     cg.add(var.set_solar_power_threshold(config[CONF_SOLAR_POWER_THRESHOLD]))
     cg.add(var.set_check_solar_inverter_power(config[CONF_CHECK_SOLAR_INVERTER_POWER]))
+    cg.add(var.set_enable_inverter_ac_input_strategy(config[CONF_ENABLE_INVERTER_AC_INPUT_STRATEGY]))
+    cg.add(var.set_low_power_restore_threshold(config[CONF_LOW_POWER_RESTORE_THRESHOLD]))
     cg.add(var.set_inverter_output_power_range_min(config[CONF_INVERTER_OUTPUT_POWER_RANGE_MIN]))
     cg.add(var.set_inverter_output_power_range_max(config[CONF_INVERTER_OUTPUT_POWER_RANGE_MAX]))
     cg.add(var.set_firmware_version(config[CONF_FIRMWARE_VERSION]))
